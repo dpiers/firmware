@@ -355,3 +355,6 @@ define REPACK_NAND_FIT
 		$(foreach f,$(NAND_FIT_IMAGES),$(f).$(BR2_OPENIPC_SOC_MODEL))
 	rm -f $(TARGET)/images/*.md5sum
 endef
+
+# Isolated source-built RAM runtime; existing camera targets are unchanged.
+include $(CURDIR)/experimental/nt98513/targets.mk

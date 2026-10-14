@@ -1,0 +1,367 @@
+--- a/drivers/watchdog/Kconfig
++++ b/drivers/watchdog/Kconfig
+@@ -2258,3 +2258,14 @@
+ 	  module will be called keembay_wdt.
+ 
+ endif # WATCHDOG
++
++config NT98513_WATCHDOG
++ bool "Independent NT98513 watchdog"
++ depends on MACH_NT98513 && WATCHDOG && WATCHDOG_HANDLE_BOOT_ENABLED
++ depends on !SMP && !SUSPEND && !HIBERNATION
++ select WATCHDOG_CORE
++ help
++   Opt-in watchdog with original-byte-derived clock/semaphore setup.
++   Always nowayout, no unload, unbind, shutdown stop or restart trigger.
++   The retained board contract selects cross-core register bank 1.
++   No pre-probe keepalive guarantee or board validation is provided.
+--- a/drivers/watchdog/Makefile
++++ b/drivers/watchdog/Makefile
+@@ -235,3 +235,5 @@
+ obj-$(CONFIG_RAVE_SP_WATCHDOG) += rave-sp-wdt.o
+ obj-$(CONFIG_STPMIC1_WATCHDOG) += stpmic1_wdt.o
+ obj-$(CONFIG_SL28CPLD_WATCHDOG) += sl28cpld_wdt.o
++
++obj-$(CONFIG_NT98513_WATCHDOG) += nt98513_wdt.o
+--- a/arch/mips/boot/dts/nt98513/nt98513.dts
++++ b/arch/mips/boot/dts/nt98513/nt98513.dts
+@@ -27,4 +27,9 @@
+   reg-io-width = <4>;
+   no-loopback-test;
+  };
++ watchdog@c0050000 {
++  compatible = "openipc,nt98513-watchdog";
++  reg = <0xc0050000 0x10>, <0xc0020074 4>, <0xc0020084 4>, <0xc0090050 0x0c>;
++  reg-names = "watchdog", "clock-gate", "clock-prepare", "core1-cg-semaphore";
++ };
+ };
+--- /dev/null
++++ b/drivers/watchdog/nt98513_wdt.c
+@@ -0,0 +1,327 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/* Independent NT98513 watchdog, original-byte contract in DAN-229 report. */
++#include <linux/bitops.h>
++#include <linux/err.h>
++#include <linux/io.h>
++#include <linux/iopoll.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/slab.h>
++#include <linux/watchdog.h>
++
++#define NT_CTRL         0x00
++#define NT_STATUS       0x04
++#define NT_FEED         0x08
++#define NT_KEY          0x5a960000U
++#define NT_ENABLE       BIT(0)
++#define NT_MODE         BIT(1)
++#define NT_RUNNING      BIT(30)
++#define NT_CG_BIT       BIT(17)
++#define NT_LOCK_BIT     BIT(2)
++#define NT_RATE         11718U
++#define NT_TICKS        4096U
++#define NT_POLL_US      1000
++#define NT_MAX_TIMEOUT  89U
++#define NT_DEFAULT      80U
++
++struct nt98513_wdt {
++	void __iomem *base;
++	void __iomem *gate;
++	void __iomem *reset;
++	void __iomem *semaphore;
++	struct watchdog_device wdd;
++	struct mutex lock;
++	bool fault;
++	bool enabled;
++	unsigned int q;
++};
++
++/* This is a software-derived interval; the clock has not been measured. */
++static unsigned int nt_heartbeat(unsigned int q)
++{
++	return q * NT_TICKS * 1000U / NT_RATE;
++}
++
++static int nt_fault(struct nt98513_wdt *wdt, int error)
++{
++	if (!wdt->fault)
++		dev_err(wdt->wdd.parent,
++			"watchdog transaction failed (%d); hardware state uncertain, feeding latched off\n",
++			error);
++	wdt->fault = true;
++	return error;
++}
++
++static int nt_check(struct nt98513_wdt *wdt)
++{
++	u32 expected = (wdt->q << 8) | NT_MODE | (wdt->enabled ? NT_ENABLE : 0);
++
++	if ((readl(wdt->base + NT_CTRL) & 0xffff) != expected ||
++	    !!(readl(wdt->base + NT_STATUS) & NT_RUNNING) != wdt->enabled)
++		return nt_fault(wdt, -EIO);
++	return 0;
++}
++
++/* A private mutex also covers the inherited-running open path, which can
++ * call ping before taking the core data mutex. No IRQ callbacks use this. */
++static int nt_ping_locked(struct watchdog_device *wdd)
++{
++	struct nt98513_wdt *wdt = watchdog_get_drvdata(wdd);
++	u32 value;
++	int ret;
++
++	if (wdt->fault)
++		return -EIO;
++	if (!wdt->enabled || nt_check(wdt))
++		return nt_fault(wdt, -EIO);
++	ret = readl_poll_timeout(wdt->base + NT_FEED, value,
++				!(value & 1), 1, NT_POLL_US);
++	if (ret)
++		return nt_fault(wdt, ret);
++	/* Preserve non-command bits, as the original ordinary feed does. */
++	writel(value | 1, wdt->base + NT_FEED);
++	/* Flush posted write and bound command consumption, not physical reset. */
++	ret = readl_poll_timeout(wdt->base + NT_FEED, value,
++				!(value & 1), 1, NT_POLL_US);
++	return ret ? nt_fault(wdt, ret) : 0;
++}
++
++static int nt_set_timeout_locked(struct watchdog_device *wdd, unsigned int timeout)
++{
++	struct nt98513_wdt *wdt = watchdog_get_drvdata(wdd);
++	u32 old, value, expected;
++	unsigned int q;
++	int ret;
++
++	/* max_timeout is not enforced by the core with max_hw_heartbeat_ms. */
++	if (!timeout || timeout > NT_MAX_TIMEOUT)
++		return -EINVAL;
++	if (wdt->fault)
++		return -EIO;
++	q = DIV_ROUND_UP(timeout * NT_RATE, NT_TICKS);
++	old = (wdt->q << 8) | NT_MODE | (wdt->enabled ? NT_ENABLE : 0);
++	if (nt_check(wdt))
++		return nt_fault(wdt, -EIO);
++	if (old & NT_ENABLE) {
++		ret = nt_ping_locked(wdd);
++		if (ret)
++			return ret;
++	}
++	expected = (old & 0xff) | (q << 8);
++	writel(NT_KEY | expected, wdt->base + NT_CTRL);
++	value = readl(wdt->base + NT_CTRL);
++	if ((value & 0xffff) != expected ||
++	    !!(readl(wdt->base + NT_STATUS) & NT_RUNNING) != wdt->enabled)
++		return nt_fault(wdt, -EIO);
++	/* Commit only verified hardware configuration. A later feed failure
++	 * returns an error with this new setting retained, never a fake rollback. */
++	wdt->q = q;
++	wdd->timeout = timeout;
++	wdd->max_hw_heartbeat_ms = nt_heartbeat(q);
++	if (old & NT_ENABLE)
++		return nt_ping_locked(wdd);
++	return 0;
++}
++
++static int nt_start_locked(struct watchdog_device *wdd)
++{
++	struct nt98513_wdt *wdt = watchdog_get_drvdata(wdd);
++	u32 value, expected;
++	int ret;
++
++	if (wdt->fault)
++		return -EIO;
++	value = (wdt->q << 8) | NT_MODE | (wdt->enabled ? NT_ENABLE : 0);
++	if (nt_check(wdt) || !wdt->q)
++		return nt_fault(wdt, -EIO);
++	if (wdt->enabled)
++		return nt_ping_locked(wdd);
++	expected = (value & 0xffff) | NT_ENABLE;
++	writel(NT_KEY | expected, wdt->base + NT_CTRL);
++	if ((readl(wdt->base + NT_CTRL) & 0xffff) != expected)
++		return nt_fault(wdt, -EIO);
++	ret = readl_poll_timeout(wdt->base + NT_STATUS, value,
++				value & NT_RUNNING, 1, NT_POLL_US);
++	if (ret)
++		return nt_fault(wdt, ret);
++	wdt->enabled = true;
++	return nt_ping_locked(wdd);
++}
++
++static int nt_ping(struct watchdog_device *wdd)
++{
++	struct nt98513_wdt *wdt = watchdog_get_drvdata(wdd);
++	int ret;
++
++	mutex_lock(&wdt->lock);
++	ret = nt_ping_locked(wdd);
++	mutex_unlock(&wdt->lock);
++	return ret;
++}
++
++static int nt_set_timeout(struct watchdog_device *wdd, unsigned int timeout)
++{
++	struct nt98513_wdt *wdt = watchdog_get_drvdata(wdd);
++	int ret;
++
++	mutex_lock(&wdt->lock);
++	ret = nt_set_timeout_locked(wdd, timeout);
++	mutex_unlock(&wdt->lock);
++	return ret;
++}
++
++static int nt_start(struct watchdog_device *wdd)
++{
++	struct nt98513_wdt *wdt = watchdog_get_drvdata(wdd);
++	int ret;
++
++	mutex_lock(&wdt->lock);
++	ret = nt_start_locked(wdd);
++	mutex_unlock(&wdt->lock);
++	return ret;
++}
++
++/* Clocks are shared with the RTOS. Stock core-1 CG arbitration is CC
++ * resource 2: request+0x50, acquired+0x58, release+0x54. Never change any
++ * other resource bit, pulse reset, or disable a clock on an error path. */
++static int nt_prepare_clock(struct nt98513_wdt *wdt)
++{
++	u32 value;
++	int ret;
++
++	writel(NT_LOCK_BIT, wdt->semaphore);
++	ret = readl_poll_timeout(wdt->semaphore + 8, value,
++				value & NT_LOCK_BIT, 1, NT_POLL_US);
++	if (ret)
++		goto release;
++	value = readl(wdt->reset);
++	if (!(value & NT_CG_BIT))
++		writel(value | NT_CG_BIT, wdt->reset);
++	if (!(readl(wdt->reset) & NT_CG_BIT)) {
++		ret = -EIO;
++		goto release;
++	}
++	value = readl(wdt->gate);
++	if (!(value & NT_CG_BIT))
++		writel(value | NT_CG_BIT, wdt->gate);
++	if (!(readl(wdt->gate) & NT_CG_BIT))
++		ret = -EIO;
++release:
++	/* Also withdraw a timed-out request; acquisition may race the deadline. */
++	writel(NT_LOCK_BIT, wdt->semaphore + 4);
++	readl(wdt->semaphore + 8);
++	return ret;
++}
++
++static const struct watchdog_info nt_info = {
++	.identity = "NT98513 independent watchdog",
++	.options = WDIOF_KEEPALIVEPING | WDIOF_SETTIMEOUT,
++};
++
++static const struct watchdog_ops nt_ops = {
++	.owner = THIS_MODULE,
++	.start = nt_start,
++	.ping = nt_ping,
++	.set_timeout = nt_set_timeout,
++};
++
++static void __iomem *nt_map(struct platform_device *pdev, unsigned int index,
++			   resource_size_t address, resource_size_t size)
++{
++	struct resource *res = platform_get_resource(pdev, IORESOURCE_MEM, index);
++
++	if (!res || res->start != address || resource_size(res) != size)
++		return ERR_PTR(-EINVAL);
++	return devm_ioremap_resource(&pdev->dev, res);
++}
++
++static int nt_probe(struct platform_device *pdev)
++{
++	struct nt98513_wdt *wdt;
++	struct watchdog_device *wdd;
++	u32 ctrl, status;
++	unsigned int q;
++	int ret;
++
++	wdt = devm_kzalloc(&pdev->dev, sizeof(*wdt), GFP_KERNEL);
++	if (!wdt)
++		return -ENOMEM;
++	mutex_init(&wdt->lock);
++	wdd = &wdt->wdd;
++	wdd->parent = &pdev->dev;
++	wdd->info = &nt_info;
++	wdd->ops = &nt_ops;
++	wdd->min_timeout = 1;
++	wdd->max_timeout = NT_MAX_TIMEOUT;
++	watchdog_set_drvdata(wdd, wdt);
++	watchdog_set_nowayout(wdd, true);
++	wdt->base = nt_map(pdev, 0, 0xc0050000, 0x10);
++	if (IS_ERR(wdt->base))
++		return PTR_ERR(wdt->base);
++	wdt->gate = nt_map(pdev, 1, 0xc0020074, 4);
++	if (IS_ERR(wdt->gate))
++		return PTR_ERR(wdt->gate);
++	wdt->reset = nt_map(pdev, 2, 0xc0020084, 4);
++	if (IS_ERR(wdt->reset))
++		return PTR_ERR(wdt->reset);
++	wdt->semaphore = nt_map(pdev, 3, 0xc0090050, 0x0c);
++	if (IS_ERR(wdt->semaphore))
++		return PTR_ERR(wdt->semaphore);
++
++	ret = nt_prepare_clock(wdt);
++	if (ret)
++		return dev_err_probe(&pdev->dev, ret, "watchdog clock preparation failed\n");
++	ctrl = readl(wdt->base + NT_CTRL);
++	status = readl(wdt->base + NT_STATUS);
++	if (!!(ctrl & NT_ENABLE) != !!(status & NT_RUNNING))
++		return dev_err_probe(&pdev->dev, -EIO, "watchdog enable/status disagree\n");
++	if (ctrl & NT_ENABLE) {
++		q = (ctrl >> 8) & 0xff;
++		if ((ctrl & 0xff) != (NT_MODE | NT_ENABLE) || !q)
++			return dev_err_probe(&pdev->dev, -EINVAL, "unsupported inherited watchdog mode\n");
++		/* Keep the inherited interval until an explicit userspace SETTIMEOUT.
++		 * Round up its advertised integer timeout; tell core the shorter
++		 * hardware period so pre-open and active workers account for it. */
++		wdt->q = q;
++		wdt->enabled = true;
++		wdd->timeout = DIV_ROUND_UP(q * NT_TICKS, NT_RATE);
++		wdd->max_hw_heartbeat_ms = nt_heartbeat(q);
++		ret = nt_ping(wdd);
++		if (ret)
++			return ret;
++		set_bit(WDOG_HW_RUNNING, &wdd->status);
++	} else {
++		writel(NT_KEY | NT_MODE, wdt->base + NT_CTRL);
++		if ((readl(wdt->base + NT_CTRL) & 0xffff) != NT_MODE)
++			return nt_fault(wdt, -EIO);
++		ret = nt_set_timeout(wdd, NT_DEFAULT);
++		if (ret)
++			return ret;
++	}
++	ret = devm_watchdog_register_device(&pdev->dev, wdd);
++	if (ret)
++		return dev_err_probe(&pdev->dev, ret,
++			"watchdog registration failed; no continuing kernel keepalive\n");
++	dev_info(&pdev->dev, "watchdog registered: inherited=%d timeout=%us hardware=%ums nowayout=1\n",
++		 watchdog_hw_running(wdd), wdd->timeout, wdd->max_hw_heartbeat_ms);
++	return 0;
++}
++
++static const struct of_device_id nt_match[] = {
++	{ .compatible = "openipc,nt98513-watchdog" },
++	{ }
++};
++
++static struct platform_driver nt_driver = {
++	.probe = nt_probe,
++	.driver = {
++		.name = "nt98513-watchdog",
++		.of_match_table = nt_match,
++		.suppress_bind_attrs = true,
++	},
++};
++builtin_platform_driver(nt_driver);
++MODULE_DESCRIPTION("Independent NT98513 watchdog (offline BSP milestone)");
++MODULE_LICENSE("GPL");
