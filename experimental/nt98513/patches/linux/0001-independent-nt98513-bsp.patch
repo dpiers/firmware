@@ -1,0 +1,321 @@
+--- a/arch/mips/Kbuild.platforms
++++ b/arch/mips/Kbuild.platforms
+@@ -34,4 +34,6 @@
+ platform-$(CONFIG_MACH_TX49XX)		+= txx9/
+ 
+ # include the platform specific files
++platform-$(CONFIG_MACH_NT98513) += nt98513/
++
+ include $(patsubst %/, $(srctree)/arch/mips/%/Platform, $(platform-y))
+--- a/arch/mips/Kconfig
++++ b/arch/mips/Kconfig
+@@ -131,6 +131,24 @@
+ 	prompt "System type"
+ 	default MIPS_GENERIC_KERNEL
+ 
++config MACH_NT98513
++ bool "Independent NT98513 RAM-only bring-up slice"
++ select BOOT_ELF32
++ select BOOT_RAW
++ select BUILTIN_DTB
++ select CEVT_R4K
++ select CSRC_R4K
++ select CPU_MIPSR2_IRQ_VI
++ select DMA_NONCOHERENT
++ select IRQ_MIPS_CPU
++ select SYS_HAS_CPU_MIPS32_R2
++ select SYS_SUPPORTS_32BIT_KERNEL
++ select SYS_SUPPORTS_LITTLE_ENDIAN
++ select USE_OF
++ help
++   Original-source-derived minimal platform. No vendor modules, storage,
++   media or board-boot claim. Requires inherited routing and VInt/Count.
++
+ config MIPS_GENERIC_KERNEL
+ 	bool "Generic board-agnostic MIPS kernel"
+ 	select MIPS_GENERIC
+--- a/arch/mips/boot/dts/Makefile
++++ b/arch/mips/boot/dts/Makefile
+@@ -17,3 +17,6 @@
+ subdir-$(CONFIG_FIT_IMAGE_FDT_XILFPGA)	+= xilfpga
+ 
+ obj-$(CONFIG_BUILTIN_DTB)	:= $(addsuffix /, $(subdir-y))
++
++subdir-$(CONFIG_MACH_NT98513) += nt98513
++obj-$(CONFIG_MACH_NT98513) += nt98513/
+--- /dev/null
++++ b/arch/mips/boot/dts/nt98513/Makefile
+@@ -0,0 +1,2 @@
++dtb-$(CONFIG_MACH_NT98513) += nt98513.dtb
++obj-$(CONFIG_BUILTIN_DTB) += $(addsuffix .o, $(dtb-y))
+--- /dev/null
++++ b/arch/mips/boot/dts/nt98513/nt98513.dts
+@@ -0,0 +1,30 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/dts-v1/;
++/ {
++ compatible = "openipc,nt98513-ram-only";
++ model = "Independent NT98513 RAM-only build milestone";
++ #address-cells = <1>;
++ #size-cells = <1>;
++ chosen { stdout-path = "serial0:115200n8"; };
++ aliases { serial0 = &uart0; };
++ /* Deliberately exclude [0,0x101000), U-Boot reuse [0x3400000,0x3b00000)
++  * and everything at/above RTOS base. No inferred allmem=128M admission. */
++ memory@101000 { device_type = "memory"; reg = <0x00101000 0x032ff000>; };
++ intc: interrupt-controller@c0080000 {
++  compatible = "openipc,nt98513-intc";
++  reg = <0xc0080000 0x1000>;
++  interrupt-controller;
++  #interrupt-cells = <1>;
++  #address-cells = <0>;
++ };
++ uart0: serial@c0300000 {
++  compatible = "ns16550a";
++  reg = <0xc0300000 0x1000>;
++  interrupt-parent = <&intc>;
++  interrupts = <44>;
++  clock-frequency = <48000000>;
++  reg-shift = <2>;
++  reg-io-width = <4>;
++  no-loopback-test;
++ };
++};
+--- /dev/null
++++ b/arch/mips/nt98513/Makefile
+@@ -0,0 +1,2 @@
++# SPDX-License-Identifier: GPL-2.0-only
++obj-y += setup.o irq.o time.o
+--- /dev/null
++++ b/arch/mips/nt98513/Platform
+@@ -0,0 +1,3 @@
++# SPDX-License-Identifier: GPL-2.0-only
++load-$(CONFIG_MACH_NT98513) += 0xffffffff80101000
++all-$(CONFIG_MACH_NT98513) := vmlinux.bin
+--- /dev/null
++++ b/arch/mips/nt98513/contract.h
+@@ -0,0 +1,28 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef NT98513_CONTRACT_H
++#define NT98513_CONTRACT_H
++/* Original-backed arithmetic only; no assertion of physical clocks/IRQ delivery. */
++static inline int nt98513_vector(unsigned int sample)
++{
++ unsigned int vector = sample >> 2;
++ return vector >= 1 && vector <= 61 ? (int)(vector - 1) : -1;
++}
++static inline unsigned int nt98513_mask_offset(unsigned int hwirq)
++{
++ return hwirq < 61 ? 0x70 + 4 * (hwirq >> 5) : 0;
++}
++static inline unsigned int nt98513_mask(unsigned int hwirq)
++{
++ return hwirq < 61 ? 1U << (hwirq & 31) : 0;
++}
++static inline unsigned int nt98513_count_hz(unsigned int selector,
++ unsigned int w0, unsigned int w1, unsigned int w2)
++{
++ unsigned int m, predivide;
++ if (selector != 1)
++  return selector == 2 ? 240000000U : 120000000U;
++ m = w0 | (w1 << 8) | (w2 << 16);
++ predivide = (unsigned int)(((unsigned long long)m * 12000000U) >> 17);
++ return predivide >> 1;
++}
++#endif
+--- /dev/null
++++ b/arch/mips/nt98513/irq.c
+@@ -0,0 +1,103 @@
++// SPDX-License-Identifier: GPL-2.0-only
++#include <linux/init.h>
++#include <linux/interrupt.h>
++#include <linux/io.h>
++#include <linux/irq.h>
++#include <linux/irqdomain.h>
++#include <linux/of.h>
++#include <linux/spinlock.h>
++#include <asm/cpu-features.h>
++#include <asm/irq.h>
++#include <asm/irq_cpu.h>
++#include <asm/mipsregs.h>
++#include <asm/setup.h>
++#include "contract.h"
++
++static void __iomem *intc;
++static struct irq_domain *intc_domain;
++static DEFINE_RAW_SPINLOCK(intc_lock);
++
++static void nt98513_mask_update(struct irq_data *d, bool enable)
++{
++ unsigned long flags;
++ unsigned int offset = nt98513_mask_offset(d->hwirq);
++ unsigned int mask = nt98513_mask(d->hwirq), value;
++ if (WARN_ON_ONCE(!offset))
++  return;
++ raw_spin_lock_irqsave(&intc_lock, flags);
++ value = readl(intc + offset);
++ writel(enable ? value | mask : value & ~mask, intc + offset);
++ raw_spin_unlock_irqrestore(&intc_lock, flags);
++}
++static void nt98513_mask_irq(struct irq_data *d) { nt98513_mask_update(d, false); }
++static void nt98513_unmask_irq(struct irq_data *d) { nt98513_mask_update(d, true); }
++static struct irq_chip nt98513_chip = {
++ .name = "nt98513-intc",
++ .irq_mask = nt98513_mask_irq,
++ .irq_mask_ack = nt98513_mask_irq,
++ .irq_unmask = nt98513_unmask_irq,
++};
++static int nt98513_irq_map(struct irq_domain *domain, unsigned int irq,
++ irq_hw_number_t hwirq)
++{
++ if (hwirq >= 61)
++  return -EINVAL;
++ irq_set_chip_and_handler(irq, &nt98513_chip, handle_level_irq);
++ return 0;
++}
++static const struct irq_domain_ops nt98513_domain_ops = {
++ .map = nt98513_irq_map,
++ .xlate = irq_domain_xlate_onecell,
++};
++
++static void nt98513_vi2(void)
++{
++ int hwirq = nt98513_vector(readl(intc + 0x104));
++ if (hwirq >= 0)
++  do_domain_IRQ(intc_domain, hwirq);
++ else
++  spurious_interrupt();
++}
++static void nt98513_vi7(void)
++{
++ do_IRQ(MIPS_CPU_IRQ_BASE + 7);
++}
++/* CPU-domain construction installs this fallback before the two VI overrides.
++ * Only the recovered inputs are dispatched; no invented source scan. */
++asmlinkage void plat_irq_dispatch(void)
++{
++ unsigned int pending = read_c0_status() & read_c0_cause();
++ if (pending & STATUSF_IP7)
++  nt98513_vi7();
++ else if (pending & STATUSF_IP2)
++  nt98513_vi2();
++ else
++  spurious_interrupt();
++}
++void __init arch_init_irq(void)
++{
++ struct device_node *node;
++ if (!cpu_has_vint || cpu_has_veic || !cpu_has_counter || cp0_compare_irq != 7)
++  panic("NT98513: requires VInt with Count/Compare on input 7");
++ /* start_kernel: trap_init -> mm_core_init/vmalloc_init -> init_IRQ.
++  * These page-table mappings are created AFTER generic TLB initialization.
++  * Do not recreate the stock C0 512-MiB wired entry over generic vmalloc. */
++ intc = ioremap(0xc0080000, 0x1000);
++ if (!intc)
++  panic("NT98513: cannot map interrupt controller");
++ mips_cpu_irq_init();
++ node = of_find_compatible_node(NULL, NULL, "openipc,nt98513-intc");
++ if (!node)
++  panic("NT98513: missing controller node");
++ intc_domain = irq_domain_add_linear(node, 61, &nt98513_domain_ops, NULL);
++ of_node_put(node);
++ if (!intc_domain)
++  panic("NT98513: cannot create controller domain");
++ /* Only Linux enable banks. Route words and RTOS enable banks stay inherited. */
++ writel(0, intc + 0x70);
++ writel(0, intc + 0x74);
++ set_vi_handler(2, nt98513_vi2);
++ set_vi_handler(7, nt98513_vi7);
++ set_c0_status(STATUSF_IP2 | STATUSF_IP7);
++ irq_enable_hazard();
++}
+--- /dev/null
++++ b/arch/mips/nt98513/setup.c
+@@ -0,0 +1,47 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/* Independent RAM-only NT98513 slice; original contracts are in README.md. */
++#include <linux/init.h>
++#include <linux/kernel.h>
++#include <linux/memblock.h>
++#include <linux/of_fdt.h>
++#include <linux/of_platform.h>
++#include <asm/bootinfo.h>
++#include <asm/cpu-features.h>
++#include <asm/prom.h>
++
++const char *get_system_type(void)
++{
++ return "NT98513 independent RAM-only BSP";
++}
++
++void __init prom_init(void)
++{
++ /* trap_init would otherwise install vectors at low CAC_BASE. Require its
++  * R2/R6 memblock-allocated EBase path before it can touch shared low RAM. */
++ if (!cpu_has_mips_r2_r6)
++  panic("NT98513: R2-style allocated exception vectors required");
++ /* head.S preserves the stock argc/argv/envp/a3 registers. Never dereference
++  * inherited pointers or import root/init/mem overrides into this slice. */
++ pr_info("NT98513 PROM: argc=%lu argv=%08lx envp=%08lx a3=%08lx (ignored)\n",
++  fw_arg0, fw_arg1, fw_arg2, fw_arg3);
++ arcs_cmdline[0] = '\0';
++}
++
++void __init plat_mem_setup(void)
++{
++ __dt_setup_arch(__dtb_start);
++ if (!initial_boot_params)
++  panic("NT98513: invalid embedded DT");
++ /* Exact owned DT is the only memory source. Defend against accidental DT
++  * expansion as well as reserving the boot/IPC and RTOS regions by exclusion. */
++ if (memblock_phys_mem_size() != 0x032ff000 ||
++     memblock_start_of_DRAM() != 0x00101000 ||
++     memblock_end_of_DRAM() != 0x03400000)
++  panic("NT98513: RAM map differs from the conservative contract");
++}
++
++static int __init nt98513_devices(void)
++{
++ return of_platform_default_populate(NULL, NULL, NULL);
++}
++arch_initcall(nt98513_devices);
+--- /dev/null
++++ b/arch/mips/nt98513/time.c
+@@ -0,0 +1,37 @@
++// SPDX-License-Identifier: GPL-2.0-only
++#include <linux/init.h>
++#include <linux/interrupt.h>
++#include <linux/io.h>
++#include <linux/kernel.h>
++#include <asm/irq.h>
++#include <asm/time.h>
++#include "contract.h"
++
++unsigned int get_c0_compare_int(void)
++{
++ /* Deliberate new-domain adaptation: standard CPU IRQ7, not stock IRQ63. */
++ return MIPS_CPU_IRQ_BASE + 7;
++}
++void __init plat_time_init(void)
++{
++ void __iomem *clock;
++ unsigned int selector, w0 = 0, w1 = 0, w2 = 0;
++ clock = ioremap(0xc0020000, 0x2000);
++ if (!clock)
++  panic("NT98513: cannot map clock registers");
++ selector = (readl(clock + 0x10) >> 12) & 3;
++ if (selector == 1) {
++  w0 = readl(clock + 0x1188);
++  w1 = readl(clock + 0x118c);
++  w2 = readl(clock + 0x1190);
++ }
++ mips_hpt_frequency = nt98513_count_hz(selector, w0, w1, w2);
++ iounmap(clock);
++ if (!mips_hpt_frequency)
++  panic("NT98513: derived Count rate is zero");
++ if (selector == 3)
++  pr_warn("NT98513: reserved clock selector; using stock fallback\n");
++ pr_info("NT98513: software Count rate %u Hz, selector %u (unmeasured)\n",
++  mips_hpt_frequency, selector);
++ /* Generic MIPS time_init next installs r4k event/source. No PLL writes. */
++}

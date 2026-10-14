@@ -1,0 +1,1 @@
+Keep this directory in source snapshots; Buildroot SYSTEM_RSYNC excludes .empty.
