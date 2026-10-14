@@ -36,16 +36,35 @@ Keep the volume, downloaded sources, build logs, resolved `.config` files, legal
 
 The outputs are `/work/output/images/vmlinux.bin`, `rootfs.cpio`, and `/work/output/build/linux-custom/vmlinux`. These are raw kernel/ELF/archive files, not a stock updater or bootloader container. The source-controlled post-build script retains only Buildroot's exact unused static-musl loader placeholder outside the rootfs; unexpected paths/types/targets fail.
 
+## Package a completed kernel for RAM testing
+
+The separate `nt98513-ram-image` target wraps the completed ELF/raw pair in an uncompressed legacy Linux/MIPS kernel container. It does not run a build. Supply an explicit timestamp and candidate staging address; the example address below has passed arithmetic checks only and is not established as free on a running camera.
+
+```sh
+make --no-print-directory --silent -C /firmware \
+  NT98513_OUTPUT=/work/output NT98513_RAM_TIMESTAMP=1791936000 \
+  NT98513_RAM_STAGE=0x03000000 nt98513-ram-image
+```
+
+The target writes `/work/output/images/nt98513-ram.uImage` and prints a JSON identity/range report. Keep the report with the image. An existing output file or symlink is refused; set `NT98513_RAM_IMAGE` to a new pathname to retain another image. Its parent directory must already exist. `NT98513_BUILDROOT` is unnecessary for packaging, and the existing build and flash targets do not invoke this target.
+
+The packager requires an ELF32 little-endian MIPS32r2/O32 executable with one static LOAD, exact matching raw bytes and a complete aligned entry instruction. It bounds the loaded kernel and BSS, the original bootloader's fourfold cache-maintenance span, and the whole staging image including its 64-byte header within physical RAM `[0x00101000,0x03400000)`. Physical and direct cached/uncached aliases are compared before rejecting staging overlap. The ELF entry is retained separately from the load address. Both header and payload carry CRC32s.
+
+These checks do not prove instruction/FP-ABI coverage, DT/initramfs correctness, live memory ownership, transfer method, cache visibility, watchdog continuity or RTOS coexistence. This is a RAM-test container, not a stock firmware updater or an RTOS capture installer; no boot or flash operation is performed.
+
 ## Checks and retained build facts
 
 ```sh
 python3 experimental/nt98513/tests/test_normalize_rootfs.py
+python3 experimental/nt98513/tests/test_ram_image_target.py
 sh -n experimental/nt98513/board/rootfs/init
 sh -n experimental/nt98513/board/overlay/etc/init.d/rcS
 python3 .github/scripts/ci-matrix.py --self-test
 ```
 
 The local test covers seven real-filesystem normalization cases without executing target code. The existing CI selector skips full builds for draft PRs; marking this draft ready selects the normal 99-board matrix because the Makefile changes. That matrix does not build this experimental target. A new full experimental build and its artifact checks remain a separate acceptance step.
+
+The RAM-image integration tests invoke the actual make target on tiny generated ELF/raw fixtures. They check input forwarding, spaces in output paths, explicit-input requirements, error propagation and preservation of existing output. Those fixtures test the packaging interface only; they are not bootable kernel or hardware evidence.
 
 The accepted earlier build passed soft-float ABI metadata checks for BusyBox, 1,406 libc members, 1,874 libgcc members and five CRT objects. Independent checks matched raw LOAD bytes, embedded CPIO and accepted DT; 20 bounded QEMU-MIPSel 24Kc userspace invocations passed without running init, mounts or device operations. Its final ELF/raw/CPIO SHA256 values are respectively `dae328ffdc49d9464ed2a4c771f42dec21657c3d68831bdb4790f0785b3c6e59`, `8e7e665e80c7671d15dfbb102a36f64ba0cb3e0bd1e94a64c80aefd84219f9c8`, and `670da13685578094d8264c62cc117e7c524ae9b10c7441d62a9fc0b2d35cbc27`. No exhaustive instruction scan is claimed. Binaries and private build receipts are intentionally outside this source-only payload.
 
