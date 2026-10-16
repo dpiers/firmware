@@ -156,3 +156,17 @@ console image measurements above do not describe this optional image. A normal
 checkout full build/legal/repeat/image validation remains required before build
 acceptance. No target execution, installed endpoint, live free-RAM, capture,
 Ethernet or boot acceptance is claimed by these source/host checks.
+
+
+### Shared CC/GPIO source increment
+
+The existing optional shared-clock target also has a source-owned sparse GPIO
+implementation and a sole cross-core bank supplier; see [SHARED_CLOCK.md](SHARED_CLOCK.md).
+Patch 4 and `gpio-cc-source-manifest.json` distinguish final migrated sources from
+the historical patch 3 imports. The normal shared firmware build and all 33 host
+test methods passed. [SHARED_CLOCK.md](SHARED_CLOCK.md) records the exact build
+commands, artifact identities and validation limits. The base and Divinus
+configurations/package remain unchanged; source and guard compatibility checks
+passed without rebuilding those variants. Physical boot, GPIO and capture
+validation remain separate future work. No GPIO consumer, service or activation
+is installed.

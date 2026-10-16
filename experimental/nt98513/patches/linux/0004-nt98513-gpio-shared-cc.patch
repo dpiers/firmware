@@ -1,0 +1,1183 @@
+--- /dev/null
++++ b/Documentation/devicetree/bindings/clock/openipc,nt98513-shared-clock-v2.yaml
+@@ -0,0 +1,29 @@
++# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/clock/openipc,nt98513-shared-clock-v2.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++title: NT98513 sticky clock owner using shared arbitration
++maintainers:
++  - Daniel Piers <dpiers@users.noreply.github.com>
++description: |
++  The supplier owns CC; this node owns only two CG words. Client1 is the
++  Ethernet activation clock; rate remains unknown. No disable/reset is exposed.
++properties:
++  compatible:
++    const: openipc,nt98513-shared-clock-v2
++  reg:
++    items:
++      - description: Gate C0020074, four bytes
++      - description: Preparation C0020084, four bytes
++  reg-names:
++    items:
++      - const: gate
++      - const: prepare
++  openipc,cc-bank:
++    $ref: /schemas/types.yaml#/definitions/phandle
++    description: Permanent core1 CC bank supplier
++  '#clock-cells':
++    const: 1
++required: [compatible, reg, reg-names, 'openipc,cc-bank', '#clock-cells']
++additionalProperties: false
+--- /dev/null
++++ b/Documentation/devicetree/bindings/gpio/openipc,nt98513-gpio.yaml
+@@ -0,0 +1,34 @@
++# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/gpio/openipc,nt98513-gpio.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++title: NT98513 sparse GPIO
++maintainers:
++  - Daniel Piers <dpiers@users.noreply.github.com>
++description: |
++  Chip offsets preserve logical IDs in a 256-offset space: 0-23,32-59,64-78,
++  96-119,128-135,160-171. Other offsets are invalid. IDs18-23 have observed
++  whole-word pad side effects; electrical meaning is not established. This
++  binding does not provide pinmux, interrupts, bias or hardware open-drain.
++properties:
++  compatible:
++    const: openipc,nt98513-gpio-v1
++  reg:
++    items:
++      - description: GPIO C0070000, 64KiB
++      - description: Pad control C0030070, four bytes
++      - description: Pad status C029001C, four bytes
++  reg-names:
++    items:
++      - const: gpio
++      - const: pad-control
++      - const: pad-status
++  openipc,cc-bank:
++    $ref: /schemas/types.yaml#/definitions/phandle
++    description: Permanent core1 CC bank supplier
++  gpio-controller: true
++  '#gpio-cells':
++    const: 2
++required: [compatible, reg, reg-names, 'openipc,cc-bank', gpio-controller, '#gpio-cells']
++additionalProperties: false
+--- /dev/null
++++ b/Documentation/devicetree/bindings/soc/openipc,nt98513-cc-bank.yaml
+@@ -0,0 +1,18 @@
++# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/soc/openipc,nt98513-cc-bank.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++title: NT98513 core1 cross-core request bank
++maintainers:
++  - Daniel Piers <dpiers@users.noreply.github.com>
++description: |
++  One permanent supplier owns the request/release/grant words. Resource2 and
++  resource4 are serialized locally. Timeout cancellation and reset are unknown.
++properties:
++  compatible:
++    const: openipc,nt98513-cc-bank-v1
++  reg:
++    maxItems: 1
++required: [compatible, reg]
++additionalProperties: false
+--- a/arch/mips/boot/dts/nt98513/nt98513-shared-clock.dts
++++ b/arch/mips/boot/dts/nt98513/nt98513-shared-clock.dts
+@@ -3,10 +3,23 @@
+ #include "nt98513.dts"
+ 
+ / {
++ cc_bank: arbitration@c0090050 {
++  compatible = "openipc,nt98513-cc-bank-v1";
++  reg = <0xc0090050 12>;
++ };
++ gpio: gpio@c0070000 {
++  compatible = "openipc,nt98513-gpio-v1";
++  reg = <0xc0070000 0x10000>, <0xc0030070 4>, <0xc029001c 4>;
++  reg-names = "gpio", "pad-control", "pad-status";
++  openipc,cc-bank = <&cc_bank>;
++  gpio-controller;
++  #gpio-cells = <2>;
++ };
+  clock_owner: clock-controller@c0020074 {
+-  compatible = "openipc,nt98513-shared-clock-v1";
+-  reg = <0xc0020074 4>, <0xc0020084 4>, <0xc0090050 12>;
+-  reg-names = "gate", "prepare", "resource2";
++  compatible = "openipc,nt98513-shared-clock-v2";
++  reg = <0xc0020074 4>, <0xc0020084 4>;
++  reg-names = "gate", "prepare";
++  openipc,cc-bank = <&cc_bank>;
+   #clock-cells = <1>;
+  };
+ };
+--- a/arch/mips/nt98513/Kconfig.shared-clock
++++ b/arch/mips/nt98513/Kconfig.shared-clock
+@@ -2,15 +2,19 @@
+ config NT98513_SHARED_CLOCK_BOARD
+  bool "Experimental NT98513 board with shared clock ownership"
+  depends on MACH_NT98513 && OF && COMMON_CLK
++ depends on GPIOLIB && OF_GPIO && GPIO_CDEV && !GPIO_CDEV_V1 && !GPIO_SYSFS
++ depends on !PINCTRL
+  depends on WATCHDOG && WATCHDOG_HANDLE_BOOT_ENABLED && WATCHDOG_NOWAYOUT
+  depends on WATCHDOG_OPEN_TIMEOUT = 0
+  depends on !NT98513_WATCHDOG && !SMP && !SUSPEND && !HIBERNATION && !OF_DYNAMIC
+  default n
+  help
+-   Select the alternate complete board DT and both shared drivers together.
++   Select the alternate complete board DT and all shared CC, clock, watchdog and GPIO drivers together.
+    This unbooted experimental image would perform MMIO during probe.
+    Hardware arbitration and the pre-probe watchdog gap remain unvalidated.
+ 
+ if NT98513_SHARED_CLOCK_BOARD
++source "drivers/soc/nt98513/Kconfig"
++source "drivers/gpio/nt98513/Kconfig"
+ source "drivers/clk/nt98513-shared/Kconfig"
+ endif
+--- a/arch/mips/nt98513/check-clock-config.sh
++++ b/arch/mips/nt98513/check-clock-config.sh
+@@ -8,8 +8,8 @@
+ awk '
+ function reject(s) { print "NT98513 shared-clock configuration: " s > "/dev/stderr"; bad=1 }
+ BEGIN {
+- split("MACH_NT98513 OF COMMON_CLK WATCHDOG WATCHDOG_HANDLE_BOOT_ENABLED WATCHDOG_NOWAYOUT NT98513_SHARED_CLOCK_BOARD NT98513_SHARED_CLOCK NT98513_WATCHDOG_SHARED", yes, " ")
+- split("NT98513_WATCHDOG SMP SUSPEND HIBERNATION OF_DYNAMIC", no, " ")
++ split("MACH_NT98513 OF COMMON_CLK WATCHDOG WATCHDOG_HANDLE_BOOT_ENABLED WATCHDOG_NOWAYOUT NT98513_SHARED_CLOCK_BOARD NT98513_SHARED_CLOCK NT98513_WATCHDOG_SHARED NT98513_CC_BANK GPIO_NT98513 GPIOLIB OF_GPIO GPIO_CDEV", yes, " ")
++ split("NT98513_WATCHDOG SMP SUSPEND HIBERNATION OF_DYNAMIC GPIO_CDEV_V1 GPIO_SYSFS PINCTRL", no, " ")
+  for (i in yes) relevant[yes[i]]=1
+  for (i in no) relevant[no[i]]=1
+  relevant["WATCHDOG_OPEN_TIMEOUT"]=1
+@@ -18,14 +18,14 @@
+  key=$0; sub(/^CONFIG_/, "", key); sub(/=.*/, "", key)
+  val=$0; sub(/^[^=]*=/, "", val)
+  if (key in relevant) { count[key]++; value[key]=val }
+- if (key ~ /^NT98513_(SHARED_CLOCK_BOARD|SHARED_CLOCK|WATCHDOG_SHARED)$/ && val != "n") active=1
++ if (key ~ /^(NT98513_(SHARED_CLOCK_BOARD|SHARED_CLOCK|WATCHDOG_SHARED|CC_BANK)|GPIO_NT98513)$/ && val != "n") active=1
+ }
+ /^# CONFIG_[A-Z0-9_]+ is not set$/ {
+  key=$0; sub(/^# CONFIG_/, "", key); sub(/ is not set$/, "", key)
+  if (key in relevant) { count[key]++; value[key]="n" }
+ }
+ END {
+- split("NT98513_SHARED_CLOCK_BOARD NT98513_SHARED_CLOCK NT98513_WATCHDOG_SHARED", trio, " ")
++ split("NT98513_SHARED_CLOCK_BOARD NT98513_SHARED_CLOCK NT98513_WATCHDOG_SHARED NT98513_CC_BANK GPIO_NT98513", trio, " ")
+  for (i in trio) if (value[trio[i]] != "" && value[trio[i]] != "n") active=1
+  if (!active) exit 0
+  for (key in count) if (count[key] != 1) reject("duplicate " key)
+--- a/arch/mips/nt98513/clock-config-guard.mk
++++ b/arch/mips/nt98513/clock-config-guard.mk
+@@ -1,6 +1,6 @@
+ # SPDX-License-Identifier: GPL-2.0-only
+ # This runs even when COMMON_CLK=n: drivers/ is unconditional for clk/.
+-nt98513-clock-request := $(filter-out n,$(CONFIG_NT98513_SHARED_CLOCK_BOARD) $(CONFIG_NT98513_SHARED_CLOCK) $(CONFIG_NT98513_WATCHDOG_SHARED))
++nt98513-clock-request := $(filter-out n,$(CONFIG_NT98513_SHARED_CLOCK_BOARD) $(CONFIG_NT98513_SHARED_CLOCK) $(CONFIG_NT98513_WATCHDOG_SHARED) $(CONFIG_NT98513_CC_BANK) $(CONFIG_GPIO_NT98513))
+ ifneq ($(strip $(nt98513-clock-request)),)
+ ifneq ($(CONFIG_MACH_NT98513),y)
+ $(error NT98513 shared-clock configuration requires CONFIG_MACH_NT98513=y)
+@@ -47,4 +47,28 @@
+ ifneq ($(CONFIG_WATCHDOG_OPEN_TIMEOUT),0)
+ $(error NT98513 shared-clock configuration requires CONFIG_WATCHDOG_OPEN_TIMEOUT=0)
+ endif
++ifneq ($(CONFIG_NT98513_CC_BANK),y)
++$(error NT98513 shared-clock configuration requires CONFIG_NT98513_CC_BANK=y)
+ endif
++ifneq ($(CONFIG_GPIO_NT98513),y)
++$(error NT98513 shared-clock configuration requires CONFIG_GPIO_NT98513=y)
++endif
++ifneq ($(CONFIG_GPIOLIB),y)
++$(error NT98513 shared-clock configuration requires CONFIG_GPIOLIB=y)
++endif
++ifneq ($(CONFIG_OF_GPIO),y)
++$(error NT98513 shared-clock configuration requires CONFIG_OF_GPIO=y)
++endif
++ifneq ($(CONFIG_GPIO_CDEV),y)
++$(error NT98513 shared-clock configuration requires CONFIG_GPIO_CDEV=y)
++endif
++ifneq ($(filter-out n,$(CONFIG_GPIO_CDEV_V1)),)
++$(error NT98513 shared-clock configuration requires CONFIG_GPIO_CDEV_V1=n)
++endif
++ifneq ($(filter-out n,$(CONFIG_GPIO_SYSFS)),)
++$(error NT98513 shared-clock configuration requires CONFIG_GPIO_SYSFS=n)
++endif
++ifneq ($(filter-out n,$(CONFIG_PINCTRL)),)
++$(error NT98513 shared-clock configuration requires CONFIG_PINCTRL=n)
++endif
++endif
+--- a/drivers/clk/nt98513-shared/Kconfig
++++ b/drivers/clk/nt98513-shared/Kconfig
+@@ -1,9 +1,9 @@
+ config NT98513_SHARED_CLOCK
+ 	bool "NT98513 shared sticky clock owner (offline candidate)"
+-	depends on MIPS && OF && COMMON_CLK && !OF_DYNAMIC
++	depends on MIPS && OF && COMMON_CLK && !OF_DYNAMIC && NT98513_CC_BANK
+ 	default n
+ 	help
+-	  One permanent owner of CG and CC resource2. No rate is established.
++	  One permanent CG owner using the shared CC resource2 supplier. No rate is established.
+ 	  Hardware activation remains unvalidated; do not select in a target image.
+ 
+ config NT98513_WATCHDOG_SHARED
+--- a/drivers/clk/nt98513-shared/core/nt98513_clock_txn.c
++++ b/drivers/clk/nt98513-shared/core/nt98513_clock_txn.c
+@@ -5,24 +5,13 @@
+ #include <errno.h>
+ #endif
+ #include "nt98513_clock_txn.h"
+-int nt_cg_activate(struct nt_cg_state *s, const struct nt_cg_io *io, unsigned client)
++int nt_cg_prepare_locked(struct nt_cg_state *s, const struct nt_cg_io *io, unsigned client)
+ {
+  unsigned bit, value;
+- int error = 0, released;
++ int error = 0;
+  if (client > 1) return -EINVAL;
+  if (s->fault) return s->fault;
+  bit = 1u << (client ? 29 : 17);
+- if (io->read(io->context, NT_CG_GRANT) & 4u) {
+-  s->fault = -EIO;
+-  return s->fault;
+- }
+- io->write(io->context, NT_CG_REQUEST, 4u);
+- error = io->wait_grant(io->context, 1);
+- if (error) {
+-  /* No cancellation contract: pending request may affect a remote peer. */
+-  s->fault = error;
+-  return error;
+- }
+  value = io->read(io->context, NT_CG_PREPARE);
+  if (!(value & bit)) io->write(io->context, NT_CG_PREPARE, value | bit);
+  if (!(io->read(io->context, NT_CG_PREPARE) & bit)) error = -EIO;
+@@ -31,11 +20,6 @@
+   if (!(value & bit)) io->write(io->context, NT_CG_GATE, value | bit);
+   if (!(io->read(io->context, NT_CG_GATE) & bit)) error = -EIO;
+  }
+- /* Only observed acquisition authorizes this source-policy release. */
+- io->write(io->context, NT_CG_RELEASE, 4u);
+- released = io->wait_grant(io->context, 0);
+- if (!error) error = released;
+  if (error) s->fault = error;
+- else s->successful_clients |= 1u << client;
+  return error;
+ }
+--- a/drivers/clk/nt98513-shared/driver/nt98513_clock_owner.c
++++ b/drivers/clk/nt98513-shared/driver/nt98513_clock_owner.c
+@@ -19,22 +19,12 @@
+  switch (r) {
+  case NT_CG_GATE: return o->gate;
+  case NT_CG_PREPARE: return o->prepare;
+- case NT_CG_REQUEST: return o->resource2;
+- case NT_CG_RELEASE: return o->resource2 + 4;
+- case NT_CG_GRANT: return o->resource2 + 8;
++
+  }
+  return NULL; /* Internal enum only. */
+ }
+ static unsigned nt_read(void *p, enum nt_cg_reg r) { return readl(nt_reg(p, r)); }
+ static void nt_write(void *p, enum nt_cg_reg r, unsigned v) { writel(v, nt_reg(p, r)); }
+-static int nt_wait(void *p, int set)
+-{
+- struct nt98513_clock_owner *o = p;
+- u32 value;
+- /* A polling policy, not a proven wall-clock or hardware completion bound. */
+- return readl_poll_timeout(o->resource2 + 8, value,
+-                           !!(value & 4) == !!set, 1, 1000);
+-}
+ static int nt_snapshot_error(u32 snapshot)
+ {
+  unsigned error = (snapshot >> 16) & 0xfff;
+@@ -43,19 +33,22 @@
+ }
+ int nt98513_clock_fault(struct nt98513_clock_owner *o)
+ {
+- return nt_snapshot_error(smp_load_acquire(&o->snapshot));
++ int error = nt_snapshot_error(smp_load_acquire(&o->snapshot));
++ return error ? error : nt_cc_status(o->bank);
+ }
+ int nt_clock_enable_snapshot(struct nt98513_clock_owner *o)
+ {
+  u32 snapshot = smp_load_acquire(&o->snapshot);
+  int error = nt_snapshot_error(snapshot);
+  if (error) return error;
++ error = nt_cc_status(o->bank);
++ if (error) return error;
+  return snapshot & (1U << NT98513_CLOCK_ETHERNET) ? 0 : -EIO;
+ }
+ int nt98513_clock_prepare_enable(struct nt98513_clock_owner *o,
+                                 enum nt98513_clock_client client)
+ {
+- struct nt_cg_io io = { o, nt_read, nt_write, nt_wait };
++ struct nt_cg_io io = { o, nt_read, nt_write };
+  int error;
+  bool first_fault = false;
+  might_sleep();
+@@ -63,14 +56,25 @@
+  mutex_lock(&o->lock);
+  error = nt_snapshot_error(smp_load_acquire(&o->snapshot));
+  if (!error) {
+-  error = nt_cg_activate(&o->state, &io, client);
++  error = nt_cc_enter(o->bank, 2);
++  if (!error) {
++   error = nt_cc_acquire_locked(o->bank, 2);
++   if (!error) {
++    int released;
++    error = nt_cg_prepare_locked(&o->state, &io, client);
++    released = nt_cc_release_locked(o->bank, 2);
++    if (!error) error = released;
++    if (!error) o->state.successful_clients |= 1u << client;
++   }
++   nt_cc_leave(o->bank);
++  }
+   first_fault = o->state.fault != 0;
+   smp_store_release(&o->snapshot, NT_CLOCK_READY | o->state.successful_clients |
+                     ((unsigned)-o->state.fault << 16));
+  }
+  mutex_unlock(&o->lock);
+  if (first_fault)
+-  dev_err(o->dev, "clock owner permanently faulted: %d; no release/retry after acquisition timeout\n", error);
++  dev_err(o->dev, "clock register verification permanently faulted: %d; CC arbitration cause is separate\n", error);
+  return error;
+ }
+ static void nt_put_supplier(void *p) { put_device(p); }
+@@ -84,7 +88,7 @@
+   return ERR_PTR(-EINVAL);
+  node = of_parse_phandle(consumer->of_node, "openipc,clock-owner", 0);
+  if (!node || !of_device_is_available(node) ||
+-     !of_device_is_compatible(node, "openipc,nt98513-shared-clock-v1")) {
++     !of_device_is_compatible(node, "openipc,nt98513-shared-clock-v2")) {
+   of_node_put(node);
+   return ERR_PTR(-EINVAL);
+  }
+@@ -95,6 +99,8 @@
+  mutex_unlock(&nt_registry_lock);
+  of_node_put(node);
+  if (error) return ERR_PTR(error);
++ error = nt98513_clock_fault(owner);
++ if (error) { put_device(owner->dev); return ERR_PTR(error); }
+  /* Install the reference action first: the managed link belongs to driver core. */
+  error = devm_add_action_or_reset(consumer, nt_put_supplier, owner->dev);
+  if (error) return ERR_PTR(error);
+@@ -106,20 +112,20 @@
+ }
+ static int nt_owner_probe(struct platform_device *pdev)
+ {
+- static const char * const names[] = { "gate", "prepare", "resource2" };
+- static const resource_size_t starts[] = { 0xc0020074, 0xc0020084, 0xc0090050 };
+- static const resource_size_t sizes[] = { 4, 4, 12 };
+- struct resource *resources[3];
++ static const char * const names[] = { "gate", "prepare" };
++ static const resource_size_t starts[] = { 0xc0020074, 0xc0020084 };
++ static const resource_size_t sizes[] = { 4, 4 };
++ struct resource *resources[2];
+  struct nt98513_clock_owner *o;
+- void __iomem *mapped[3];
++ void __iomem *mapped[2];
+  int error = -EINVAL;
+  unsigned i;
+  mutex_lock(&nt_registry_lock);
+  if (nt_reservation) { mutex_unlock(&nt_registry_lock); return -EBUSY; }
+  nt_reservation = &pdev->dev;
+  mutex_unlock(&nt_registry_lock);
+- if (pdev->num_resources != 3) goto fail;
+- for (i = 0; i < 3; i++) {
++ if (pdev->num_resources != 2) goto fail;
++ for (i = 0; i < 2; i++) {
+   resources[i] = platform_get_resource_byname(pdev, IORESOURCE_MEM, names[i]);
+   if (!resources[i] || resources[i]->start != starts[i] ||
+       resource_size(resources[i]) != sizes[i]) goto fail;
+@@ -128,11 +134,13 @@
+  if (!o) { error = -ENOMEM; goto fail; }
+  mutex_init(&o->lock);
+  o->dev = &pdev->dev;
+- for (i = 0; i < 3; i++) {
++ for (i = 0; i < 2; i++) {
+   mapped[i] = devm_ioremap_resource(&pdev->dev, resources[i]);
+   if (IS_ERR(mapped[i])) { error = PTR_ERR(mapped[i]); goto fail; }
+  }
+- o->gate = mapped[0]; o->prepare = mapped[1]; o->resource2 = mapped[2];
++ o->gate = mapped[0]; o->prepare = mapped[1];
++ o->bank = devm_nt98513_cc_bank_get(&pdev->dev);
++ if (IS_ERR(o->bank)) { error = PTR_ERR(o->bank); goto fail; }
+  platform_set_drvdata(pdev, o);
+  /* Registration may call callbacks: zero snapshot rejects them without I/O. */
+  error = nt_eth_register(o);
+@@ -152,7 +160,7 @@
+  return error;
+ }
+ static const struct of_device_id nt_owner_match[] = {
+- { .compatible = "openipc,nt98513-shared-clock-v1" }, { }
++ { .compatible = "openipc,nt98513-shared-clock-v2" }, { }
+ };
+ static struct platform_driver nt_owner_driver = {
+  .probe = nt_owner_probe,
+--- a/drivers/clk/nt98513-shared/include/nt98513_clock_private.h
++++ b/drivers/clk/nt98513-shared/include/nt98513_clock_private.h
+@@ -6,10 +6,12 @@
+ #include <linux/types.h>
+ #include "nt98513_clock_owner.h"
+ #include "nt98513_clock_txn.h"
++#include <linux/soc/nt98513_cc_bank.h>
+ #define NT_CLOCK_READY (1U << 2)
+ struct nt98513_clock_owner {
+  struct device *dev;
+- void __iomem *gate, *prepare, *resource2;
++ void __iomem *gate, *prepare;
++ struct nt98513_cc_bank *bank;
+  struct mutex lock;
+  struct nt_cg_state state;
+  u32 snapshot;
+--- a/drivers/clk/nt98513-shared/include/nt98513_clock_txn.h
++++ b/drivers/clk/nt98513-shared/include/nt98513_clock_txn.h
+@@ -1,14 +1,13 @@
+ /* SPDX-License-Identifier: GPL-2.0-only */
+ #ifndef NT98513_CLOCK_TXN_H
+ #define NT98513_CLOCK_TXN_H
+-enum nt_cg_reg { NT_CG_GATE, NT_CG_PREPARE, NT_CG_REQUEST, NT_CG_GRANT, NT_CG_RELEASE };
++enum nt_cg_reg { NT_CG_GATE, NT_CG_PREPARE };
+ struct nt_cg_io {
+  void *context;
+  unsigned (*read)(void *, enum nt_cg_reg);
+  void (*write)(void *, enum nt_cg_reg, unsigned);
+- int (*wait_grant)(void *, int want_set);
+ };
+ /* Caller exclusively serializes state and the entire transaction. */
+ struct nt_cg_state { int fault; unsigned successful_clients; };
+-int nt_cg_activate(struct nt_cg_state *, const struct nt_cg_io *, unsigned client);
++int nt_cg_prepare_locked(struct nt_cg_state *, const struct nt_cg_io *, unsigned client);
+ #endif
+--- a/drivers/gpio/Makefile
++++ b/drivers/gpio/Makefile
+@@ -195,3 +195,4 @@
+ obj-$(CONFIG_GPIO_ZEVIO)		+= gpio-zevio.o
+ obj-$(CONFIG_GPIO_ZYNQ)			+= gpio-zynq.o
+ obj-$(CONFIG_GPIO_ZYNQMP_MODEPIN)	+= gpio-zynqmp-modepin.o
++obj-$(CONFIG_GPIO_NT98513) += nt98513/
+--- /dev/null
++++ b/drivers/gpio/nt98513/Kconfig
+@@ -0,0 +1,8 @@
++# SPDX-License-Identifier: GPL-2.0-only
++config GPIO_NT98513
++ bool "NT98513 sparse GPIO with shared CC supplier"
++ depends on NT98513_CC_BANK && GPIOLIB && OF_GPIO && GPIO_CDEV
++ default n
++ help
++   Sleepable GPIO with sparse logical offsets and observed pad side effects.
++   This has not been tested on hardware. No pinmux, IRQ or bias support.
+--- /dev/null
++++ b/drivers/gpio/nt98513/Makefile
+@@ -0,0 +1,3 @@
++# SPDX-License-Identifier: GPL-2.0-only
++obj-$(CONFIG_GPIO_NT98513) += nt98513-gpio.o
++nt98513-gpio-y := gpio-core.o gpio-nt98513.o
+--- /dev/null
++++ b/drivers/gpio/nt98513/gpio-core.c
+@@ -0,0 +1,112 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#include "nt98513_gpio_core.h"
++#ifdef __KERNEL__
++#include <linux/errno.h>
++#else
++#include <errno.h>
++#endif
++int nt98513_gpio_valid(unsigned pin)
++{
++ return pin <= 23 || (pin >= 32 && pin <= 59) ||
++        (pin >= 64 && pin <= 78) || (pin >= 96 && pin <= 119) ||
++        (pin >= 128 && pin <= 135) || (pin >= 160 && pin <= 171);
++}
++int nt98513_gpio_init(struct nt98513_gpio *g,
++                     const struct nt98513_gpio_ops *ops, void *context)
++{
++ if (!g || !ops || !ops->read || !ops->write || !ops->bank_status ||
++     !ops->acquire4 || !ops->release4) return -EINVAL;
++ g->ops = ops;
++ g->context = context;
++ g->fault = 0;
++ return 0;
++}
++static int admit(struct nt98513_gpio *g, unsigned pin)
++{
++ if (!nt98513_gpio_valid(pin) || !g || !g->ops) return -EINVAL;
++ if (g->fault) return g->fault;
++ return g->ops->bank_status(g->context);
++}
++static int local_result(struct nt98513_gpio *g, int error)
++{
++ if (error && !g->fault) g->fault = error;
++ return error;
++}
++static int read_reg(struct nt98513_gpio *g, enum nt_gpio_space space,
++                    unsigned offset, nt_gpio_u32 *value)
++{
++ return local_result(g, g->ops->read(g->context, space, offset, value));
++}
++static int write_reg(struct nt98513_gpio *g, enum nt_gpio_space space,
++                     unsigned offset, nt_gpio_u32 value)
++{
++ return local_result(g, g->ops->write(g->context, space, offset, value));
++}
++static int pad(struct nt98513_gpio *g, unsigned pin)
++{
++ nt_gpio_u32 control, status;
++ int error = read_reg(g, NT_GPIO_PAD_CONTROL, 0, &control);
++ if (error) return error;
++ /* The second read is retained even for pins outside 18..23. */
++ error = read_reg(g, NT_GPIO_PAD_STATUS, 0, &status);
++ if (error || pin < 18 || pin > 23) return error;
++ if (!(status & 0x10) && (control & 1))
++  return write_reg(g, NT_GPIO_PAD_CONTROL, 0, 0x10);
++ if ((status & 0x10) && !(control & 1))
++  return write_reg(g, NT_GPIO_PAD_CONTROL, 0, 0x11);
++ return 0;
++}
++static int value_store(struct nt98513_gpio *g, unsigned pin, int value)
++{
++ return write_reg(g, NT_GPIO_REGS, (value ? 0x40 : 0x60) + 4 * (pin / 32),
++                  (nt_gpio_u32)1 << (pin % 32));
++}
++int nt98513_gpio_get(struct nt98513_gpio *g, unsigned pin)
++{
++ nt_gpio_u32 value;
++ int error = admit(g, pin);
++ if (!error) error = pad(g, pin);
++ if (!error) error = read_reg(g, NT_GPIO_REGS, 4 * (pin / 32), &value);
++ return error ? error : !!(value & ((nt_gpio_u32)1 << (pin % 32)));
++}
++int nt98513_gpio_set(struct nt98513_gpio *g, unsigned pin, int value)
++{
++ int error = admit(g, pin);
++ if (!error) error = pad(g, pin);
++ if (!error) error = value_store(g, pin, value);
++ /* No input-level readback claims an output-latch acknowledgement. */
++ return error;
++}
++int nt98513_gpio_get_direction(struct nt98513_gpio *g, unsigned pin)
++{
++ nt_gpio_u32 value;
++ int error = admit(g, pin);
++ if (!error) error = read_reg(g, NT_GPIO_REGS, 0x20 + 4 * (pin / 32), &value);
++ return error ? error : !(value & ((nt_gpio_u32)1 << (pin % 32)));
++}
++static int direction(struct nt98513_gpio *g, unsigned pin, int output, int value)
++{
++ nt_gpio_u32 old, bit = (nt_gpio_u32)1 << (pin % 32);
++ int release_error, error = admit(g, pin);
++ if (!error) error = pad(g, pin);
++ if (error) return error;
++ error = g->ops->acquire4(g->context);
++ if (error) return error; /* Pad effects may already have occurred. */
++ error = read_reg(g, NT_GPIO_REGS, 0x20 + 4 * (pin / 32), &old);
++ if (!error) error = write_reg(g, NT_GPIO_REGS, 0x20 + 4 * (pin / 32),
++                               output ? old | bit : old & ~bit);
++ /* A known successful acquisition is released once even after local I/O failure. */
++ release_error = g->ops->release4(g->context);
++ if (error) return error;
++ if (release_error) return release_error;
++ /* Failure to observe release suppresses this write, without undoing direction. */
++ return output ? value_store(g, pin, value) : 0;
++}
++int nt98513_gpio_direction_input(struct nt98513_gpio *g, unsigned pin)
++{
++ return direction(g, pin, 0, 0);
++}
++int nt98513_gpio_direction_output(struct nt98513_gpio *g, unsigned pin, int value)
++{
++ return direction(g, pin, 1, value);
++}
+--- /dev/null
++++ b/drivers/gpio/nt98513/gpio-nt98513.c
+@@ -0,0 +1,248 @@
++// SPDX-License-Identifier: GPL-2.0-only
++#include <linux/bitmap.h>
++#include <linux/device.h>
++#include <linux/err.h>
++#include <linux/gpio/driver.h>
++#include <linux/io.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/slab.h>
++#include <linux/sysfs.h>
++#include <linux/soc/nt98513_cc_bank.h>
++#include "nt98513_gpio_core.h"
++
++enum nt_gpio_phase { NT_GPIO_FAILED, NT_GPIO_REGISTERING, NT_GPIO_READY };
++struct nt_gpio_device {
++ struct gpio_chip chip;
++ struct device *dev;
++ struct mutex lock;
++ struct nt98513_cc_bank *bank;
++ struct nt98513_gpio core;
++ void __iomem *regs, *pad_control, *pad_status;
++ enum nt_gpio_phase phase;
++ int registration_error, local_fault, set_error;
++};
++static int nt_gpio_read(void *context, enum nt_gpio_space space,
++                        unsigned offset, nt_gpio_u32 *value)
++{
++ struct nt_gpio_device *g = context;
++ void __iomem *base = space == NT_GPIO_REGS ? g->regs :
++                      space == NT_GPIO_PAD_CONTROL ? g->pad_control : g->pad_status;
++ *value = readl(base + offset);
++ return 0;
++}
++static int nt_gpio_write(void *context, enum nt_gpio_space space,
++                         unsigned offset, nt_gpio_u32 value)
++{
++ struct nt_gpio_device *g = context;
++ void __iomem *base = space == NT_GPIO_REGS ? g->regs : g->pad_control;
++ writel(value, base + offset);
++ return 0;
++}
++static int nt_gpio_bank_status(void *p) { return nt_cc_status(((struct nt_gpio_device *)p)->bank); }
++static int nt_gpio_acquire4(void *p) { return nt_cc_acquire_locked(((struct nt_gpio_device *)p)->bank, 4); }
++static int nt_gpio_release4(void *p) { return nt_cc_release_locked(((struct nt_gpio_device *)p)->bank, 4); }
++static const struct nt98513_gpio_ops nt_gpio_ops = {
++ .read = nt_gpio_read, .write = nt_gpio_write, .bank_status = nt_gpio_bank_status,
++ .acquire4 = nt_gpio_acquire4, .release4 = nt_gpio_release4,
++};
++static void nt_registration_error(struct nt_gpio_device *g, int error)
++{
++ if (g->phase == NT_GPIO_REGISTERING && !g->registration_error)
++  WRITE_ONCE(g->registration_error, error);
++}
++/* Successful return retains exactly GPIO then bank mutexes. */
++static int nt_gpio_begin(struct nt_gpio_device *g, unsigned pin, bool direction_query)
++{
++ int error;
++ if (!nt98513_gpio_valid(pin)) return -EINVAL;
++ mutex_lock(&g->lock);
++ if (g->phase == NT_GPIO_REGISTERING && !direction_query) error = -EAGAIN;
++ else if (g->phase != NT_GPIO_READY && g->phase != NT_GPIO_REGISTERING) error = -ENODEV;
++ else if (g->core.fault) error = g->core.fault;
++ else {
++  error = nt_cc_enter(g->bank, 4);
++  if (!error) return 0;
++ }
++ if (direction_query && error != -EAGAIN) nt_registration_error(g, error);
++ mutex_unlock(&g->lock);
++ return error;
++}
++static void nt_gpio_end(struct nt_gpio_device *g)
++{
++ WRITE_ONCE(g->local_fault, g->core.fault);
++ nt_cc_leave(g->bank);
++ mutex_unlock(&g->lock);
++}
++static int nt_gpio_request(struct gpio_chip *chip, unsigned pin)
++{
++ struct nt_gpio_device *g = gpiochip_get_data(chip);
++ int error = nt_gpio_begin(g, pin, false);
++ if (!error) nt_gpio_end(g);
++ return error;
++}
++static int nt_gpio_get(struct gpio_chip *chip, unsigned pin)
++{
++ struct nt_gpio_device *g = gpiochip_get_data(chip);
++ int error = nt_gpio_begin(g, pin, false);
++ if (error) return error;
++ error = nt98513_gpio_get(&g->core, pin);
++ nt_gpio_end(g);
++ return error;
++}
++static void nt_gpio_set(struct gpio_chip *chip, unsigned pin, int value)
++{
++ struct nt_gpio_device *g = gpiochip_get_data(chip);
++ int error = nt_gpio_begin(g, pin, false);
++ if (!error) {
++  error = nt98513_gpio_set(&g->core, pin, value);
++  nt_gpio_end(g);
++ }
++ /* An expected early/invalid call is not a hardware or registration fault. */
++ if (error && error != -EAGAIN && error != -EINVAL) {
++  mutex_lock(&g->lock);
++  if (!g->set_error) WRITE_ONCE(g->set_error, error);
++  mutex_unlock(&g->lock);
++  dev_err_ratelimited(g->dev, "GPIO set refused: %d; void callback cannot acknowledge delivery\n", error);
++ }
++}
++static int nt_gpio_get_direction(struct gpio_chip *chip, unsigned pin)
++{
++ struct nt_gpio_device *g = gpiochip_get_data(chip);
++ int error = nt_gpio_begin(g, pin, true);
++ if (error) return error;
++ error = nt98513_gpio_get_direction(&g->core, pin);
++ if (error < 0) nt_registration_error(g, error);
++ nt_gpio_end(g);
++ return error;
++}
++static int nt_gpio_input(struct gpio_chip *chip, unsigned pin)
++{
++ struct nt_gpio_device *g = gpiochip_get_data(chip);
++ int error = nt_gpio_begin(g, pin, false);
++ if (error) return error;
++ error = nt98513_gpio_direction_input(&g->core, pin);
++ nt_gpio_end(g);
++ return error;
++}
++static int nt_gpio_output(struct gpio_chip *chip, unsigned pin, int value)
++{
++ struct nt_gpio_device *g = gpiochip_get_data(chip);
++ int error = nt_gpio_begin(g, pin, false);
++ if (error) return error;
++ error = nt98513_gpio_direction_output(&g->core, pin, value);
++ nt_gpio_end(g);
++ return error;
++}
++static int nt_gpio_set_config(struct gpio_chip *chip, unsigned pin, unsigned long config)
++{
++ (void)chip; (void)config;
++ return nt98513_gpio_valid(pin) ? -ENOTSUPP : -EINVAL;
++}
++static int nt_gpio_valid_mask(struct gpio_chip *chip, unsigned long *mask, unsigned ngpio)
++{
++ unsigned pin;
++ (void)chip;
++ if (ngpio != 256) return -EINVAL;
++ bitmap_zero(mask, ngpio);
++ for (pin = 0; pin < ngpio; pin++) if (nt98513_gpio_valid(pin)) __set_bit(pin, mask);
++ return 0;
++}
++static ssize_t fault_status_show(struct device *dev, struct device_attribute *attribute, char *buf)
++{
++ struct nt_gpio_device *g = dev_get_drvdata(dev);
++ (void)attribute;
++ return sysfs_emit(buf, "bank=%d cc2=%d cc2_phase=%d cc4=%d cc4_phase=%d gpio=%d set=%d registration=%d phase=%d\n",
++                   nt_cc_status(g->bank), nt_cc_cause(g->bank, 2), nt_cc_failure_phase(g->bank, 2),
++                   nt_cc_cause(g->bank, 4), nt_cc_failure_phase(g->bank, 4),
++                   READ_ONCE(g->local_fault), READ_ONCE(g->set_error),
++                   READ_ONCE(g->registration_error), READ_ONCE(g->phase));
++}
++static DEVICE_ATTR_RO(fault_status);
++static int nt_gpio_probe(struct platform_device *pdev)
++{
++ static const char * const names[] = { "gpio", "pad-control", "pad-status" };
++ static const resource_size_t starts[] = { 0xc0070000, 0xc0030070, 0xc029001c };
++ static const resource_size_t sizes[] = { 0x10000, 4, 4 };
++ struct device *dev = &pdev->dev;
++ struct nt_gpio_device *g;
++ struct resource *resources[3];
++ void __iomem *maps[3];
++ u32 cells;
++ unsigned i;
++ int error, bank_error;
++ if (pdev->num_resources != 3 || !dev->of_node ||
++     !of_property_read_bool(dev->of_node, "gpio-controller") || of_property_read_u32(dev->of_node, "#gpio-cells", &cells) || cells != 2 ||
++     of_get_available_child_count(dev->of_node) || platform_get_resource(pdev, IORESOURCE_MEM, 3)) return -EINVAL;
++ for (i = 0; i < 3; i++) {
++  resources[i] = platform_get_resource_byname(pdev, IORESOURCE_MEM, names[i]);
++  if (!resources[i] || resources[i]->start != starts[i] || resource_size(resources[i]) != sizes[i]) return -EINVAL;
++ }
++ g = devm_kzalloc(dev, sizeof(*g), GFP_KERNEL);
++ if (!g) return -ENOMEM;
++ g->dev = dev;
++ mutex_init(&g->lock);
++ for (i = 0; i < 3; i++) {
++  maps[i] = devm_ioremap_resource(dev, resources[i]);
++  if (IS_ERR(maps[i])) return PTR_ERR(maps[i]);
++ }
++ g->regs = maps[0]; g->pad_control = maps[1]; g->pad_status = maps[2];
++ g->bank = devm_nt98513_cc_bank_get(dev);
++ if (IS_ERR(g->bank)) return PTR_ERR(g->bank);
++ error = nt98513_gpio_init(&g->core, &nt_gpio_ops, g);
++ if (error) return error;
++ /* Read-only admission; never request a CC bit or touch a pad during probe. */
++ error = nt_cc_enter(g->bank, 4);
++ if (error) return error;
++ nt_cc_leave(g->bank);
++ platform_set_drvdata(pdev, g);
++ error = device_create_file(dev, &dev_attr_fault_status);
++ if (error) return error;
++ g->chip = (struct gpio_chip) {
++  .label = dev_name(dev), .parent = dev, .owner = THIS_MODULE,
++  .base = -1, .ngpio = 256, .can_sleep = true,
++  .request = nt_gpio_request, .get = nt_gpio_get, .set = nt_gpio_set,
++  .get_direction = nt_gpio_get_direction, .direction_input = nt_gpio_input,
++  .direction_output = nt_gpio_output, .set_config = nt_gpio_set_config,
++  .init_valid_mask = nt_gpio_valid_mask,
++ };
++ WRITE_ONCE(g->phase, NT_GPIO_REGISTERING);
++ /* gpiolib performs callbacks and its own failure unwind: no consumer lock held. */
++ error = gpiochip_add_data(&g->chip, g);
++ if (error) {
++  mutex_lock(&g->lock);
++  WRITE_ONCE(g->phase, NT_GPIO_FAILED);
++  mutex_unlock(&g->lock);
++  device_remove_file(dev, &dev_attr_fault_status);
++  return error;
++ }
++ mutex_lock(&g->lock);
++ bank_error = nt_cc_enter(g->bank, 4);
++ error = g->registration_error ? g->registration_error : bank_error;
++ if (!error) error = g->core.fault;
++ if (error) {
++  nt_registration_error(g, error);
++  WRITE_ONCE(g->phase, NT_GPIO_FAILED);
++ } else WRITE_ONCE(g->phase, NT_GPIO_READY);
++ if (!bank_error) nt_cc_leave(g->bank);
++ mutex_unlock(&g->lock);
++ if (error) {
++  /* chip removal must finish synchronous callbacks before devm releases mappings. */
++  gpiochip_remove(&g->chip);
++  device_remove_file(dev, &dev_attr_fault_status);
++ }
++ return error;
++}
++static const struct of_device_id nt_gpio_match[] = {
++ { .compatible = "openipc,nt98513-gpio-v1" }, { }
++};
++MODULE_DEVICE_TABLE(of, nt_gpio_match);
++static struct platform_driver nt_gpio_driver = {
++ .probe = nt_gpio_probe,
++ .driver = { .name = "nt98513-gpio", .of_match_table = nt_gpio_match, .suppress_bind_attrs = true },
++};
++builtin_platform_driver(nt_gpio_driver);
++MODULE_LICENSE("GPL");
++MODULE_DESCRIPTION("NT98513 GPIO with shared CC-bank admission");
+--- /dev/null
++++ b/drivers/gpio/nt98513/nt98513_gpio_core.h
+@@ -0,0 +1,28 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef NT98513_GPIO_CORE_H
++#define NT98513_GPIO_CORE_H
++#ifdef __KERNEL__
++#include <linux/types.h>
++typedef u32 nt_gpio_u32;
++#else
++#include <stdint.h>
++typedef uint32_t nt_gpio_u32;
++#endif
++enum nt_gpio_space { NT_GPIO_REGS, NT_GPIO_PAD_CONTROL, NT_GPIO_PAD_STATUS };
++/* Caller serializes GPIO then supplier bank. No core entry acquires a mutex. */
++struct nt98513_gpio_ops {
++ int (*read)(void *,enum nt_gpio_space,unsigned,nt_gpio_u32 *);
++ int (*write)(void *,enum nt_gpio_space,unsigned,nt_gpio_u32);
++ int (*bank_status)(void *);
++ int (*acquire4)(void *);
++ int (*release4)(void *);
++};
++struct nt98513_gpio { const struct nt98513_gpio_ops *ops; void *context; int fault; };
++int nt98513_gpio_init(struct nt98513_gpio *,const struct nt98513_gpio_ops *,void *);
++int nt98513_gpio_valid(unsigned);
++int nt98513_gpio_get(struct nt98513_gpio *,unsigned);
++int nt98513_gpio_set(struct nt98513_gpio *,unsigned,int);
++int nt98513_gpio_get_direction(struct nt98513_gpio *,unsigned);
++int nt98513_gpio_direction_input(struct nt98513_gpio *,unsigned);
++int nt98513_gpio_direction_output(struct nt98513_gpio *,unsigned,int);
++#endif
+--- a/drivers/soc/Makefile
++++ b/drivers/soc/Makefile
+@@ -35,3 +35,4 @@
+ obj-$(CONFIG_ARCH_U8500)	+= ux500/
+ obj-$(CONFIG_PLAT_VERSATILE)	+= versatile/
+ obj-y				+= xilinx/
++obj-$(CONFIG_NT98513_CC_BANK) += nt98513/
+--- /dev/null
++++ b/drivers/soc/nt98513/Kconfig
+@@ -0,0 +1,8 @@
++# SPDX-License-Identifier: GPL-2.0-only
++config NT98513_CC_BANK
++ bool "NT98513 persistent core1 CC bank supplier"
++ depends on MACH_NT98513 && OF && !OF_DYNAMIC
++ default n
++ help
++   Sole request/release/grant mapping for resource2 and resource4. Uncertain
++   ownership permanently refuses new transactions; no reset or cancellation.
+--- /dev/null
++++ b/drivers/soc/nt98513/Makefile
+@@ -0,0 +1,3 @@
++# SPDX-License-Identifier: GPL-2.0-only
++obj-$(CONFIG_NT98513_CC_BANK) += nt98513-cc.o
++nt98513-cc-y := cc-core.o cc-bank.o
+--- /dev/null
++++ b/drivers/soc/nt98513/cc-bank.c
+@@ -0,0 +1,166 @@
++// SPDX-License-Identifier: GPL-2.0-only
++#include <linux/device.h>
++#include <linux/err.h>
++#include <linux/init.h>
++#include <linux/io.h>
++#include <linux/iopoll.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/slab.h>
++#include <linux/soc/nt98513_cc_bank.h>
++#include "nt98513_cc_bank_core.h"
++struct nt98513_cc_bank {
++ struct device *dev;
++ void __iomem *regs;
++ struct mutex lock;
++ struct nt_cc_core core;
++ int cause_snapshot[2];
++ unsigned failure_snapshot[2];
++ unsigned snapshot; /* bit0 ready, bit1 sticky bank uncertainty */
++};
++static DEFINE_MUTEX(nt_cc_registry_lock);
++static struct device *nt_cc_reservation;
++static struct nt98513_cc_bank *nt_cc_singleton;
++static unsigned bank_grant(void *p) { return readl(((struct nt98513_cc_bank *)p)->regs + 8); }
++static void bank_write(void *p, enum nt_cc_reg reg, unsigned value)
++{
++ struct nt98513_cc_bank *b = p;
++ writel(value, b->regs + (reg == NT_CC_REQUEST ? 0 : 4));
++}
++static int bank_wait(void *p, unsigned mask, int set)
++{
++ struct nt98513_cc_bank *b = p;
++ u32 value;
++ /* Source polling policy, not a physical liveness or cancellation guarantee. */
++ return readl_poll_timeout(b->regs + 8, value, !!(value & mask) == !!set, 1, 1000);
++}
++static void bank_publish(struct nt98513_cc_bank *b)
++{
++ smp_store_release(&b->failure_snapshot[0], b->core.failure[0]);
++ smp_store_release(&b->failure_snapshot[1], b->core.failure[1]);
++ smp_store_release(&b->cause_snapshot[0], b->core.cause[0]);
++ smp_store_release(&b->cause_snapshot[1], b->core.cause[1]);
++ smp_store_release(&b->snapshot, 1u | (b->core.uncertain ? 2u : 0));
++}
++int nt_cc_status(struct nt98513_cc_bank *b)
++{
++ unsigned s = smp_load_acquire(&b->snapshot);
++ return !(s & 1) ? -EPROBE_DEFER : s & 2 ? -EIO : 0;
++}
++int nt_cc_failure_phase(struct nt98513_cc_bank *b, unsigned r)
++{
++ if (r != 2 && r != 4) return -EINVAL;
++ return smp_load_acquire(&b->failure_snapshot[r == 4]);
++}
++int nt_cc_cause(struct nt98513_cc_bank *b, unsigned r)
++{
++ if (r != 2 && r != 4) return -EINVAL;
++ return smp_load_acquire(&b->cause_snapshot[r == 4]);
++}
++int nt_cc_enter(struct nt98513_cc_bank *b, unsigned r)
++{
++ int error;
++ might_sleep();
++ if (r != 2 && r != 4) return -EINVAL;
++ mutex_lock(&b->lock);
++ error = nt_cc_status(b);
++ if (error == -EIO && nt_cc_core_cause(&b->core, r)) error = nt_cc_core_cause(&b->core, r);
++ if (!error) error = nt_cc_core_enter(&b->core, r);
++ if (error) mutex_unlock(&b->lock);
++ return error;
++}
++int nt_cc_acquire_locked(struct nt98513_cc_bank *b, unsigned r)
++{
++ const struct nt_cc_io io = { b, bank_grant, bank_write, bank_wait };
++ int error;
++ lockdep_assert_held(&b->lock);
++ error = nt_cc_core_acquire(&b->core, &io, r);
++ bank_publish(b);
++ return error;
++}
++int nt_cc_release_locked(struct nt98513_cc_bank *b, unsigned r)
++{
++ const struct nt_cc_io io = { b, bank_grant, bank_write, bank_wait };
++ int error;
++ lockdep_assert_held(&b->lock);
++ error = nt_cc_core_release(&b->core, &io, r);
++ bank_publish(b);
++ return error;
++}
++void nt_cc_leave(struct nt98513_cc_bank *b)
++{
++ lockdep_assert_held(&b->lock);
++ nt_cc_core_leave(&b->core);
++ bank_publish(b);
++ mutex_unlock(&b->lock);
++}
++static void nt_cc_put(void *p) { put_device(p); }
++struct nt98513_cc_bank *devm_nt98513_cc_bank_get(struct device *consumer)
++{
++ struct device_node *node;
++ struct nt98513_cc_bank *bank;
++ int error;
++ might_sleep();
++ if (of_property_count_u32_elems(consumer->of_node, "openipc,cc-bank") != 1) return ERR_PTR(-EINVAL);
++ node = of_parse_phandle(consumer->of_node, "openipc,cc-bank", 0);
++ if (!node || !of_device_is_available(node) ||
++     !of_device_is_compatible(node, "openipc,nt98513-cc-bank-v1")) {
++  of_node_put(node); return ERR_PTR(-EINVAL);
++ }
++ mutex_lock(&nt_cc_registry_lock);
++ bank = nt_cc_singleton;
++ error = !bank ? -EPROBE_DEFER : bank->dev->of_node != node ? -EINVAL : 0;
++ if (!error) get_device(bank->dev);
++ mutex_unlock(&nt_cc_registry_lock);
++ of_node_put(node);
++ if (error) return ERR_PTR(error);
++ error = devm_add_action_or_reset(consumer, nt_cc_put, bank->dev);
++ if (error) return ERR_PTR(error);
++ if (!device_link_add(consumer, bank->dev, DL_FLAG_AUTOREMOVE_CONSUMER)) {
++  devm_release_action(consumer, nt_cc_put, bank->dev); return ERR_PTR(-ENOMEM);
++ }
++ return bank;
++}
++static int nt_cc_probe(struct platform_device *pdev)
++{
++ struct resource *r;
++ struct nt98513_cc_bank *b;
++ int error = -EINVAL;
++ mutex_lock(&nt_cc_registry_lock);
++ if (nt_cc_reservation) { mutex_unlock(&nt_cc_registry_lock); return -EBUSY; }
++ nt_cc_reservation = &pdev->dev;
++ mutex_unlock(&nt_cc_registry_lock);
++ if (pdev->num_resources != 1) goto fail;
++ r = platform_get_resource(pdev, IORESOURCE_MEM, 0);
++ if (!r || r->start != 0xc0090050 || resource_size(r) != 12) goto fail;
++ b = devm_kzalloc(&pdev->dev, sizeof(*b), GFP_KERNEL);
++ if (!b) { error = -ENOMEM; goto fail; }
++ b->dev = &pdev->dev;
++ mutex_init(&b->lock);
++ b->regs = devm_ioremap_resource(&pdev->dev, r);
++ if (IS_ERR(b->regs)) { error = PTR_ERR(b->regs); goto fail; }
++ platform_set_drvdata(pdev, b);
++ /* No I/O in probe, no fallible work or removal after publication. */
++ mutex_lock(&nt_cc_registry_lock);
++ bank_publish(b);
++ nt_cc_singleton = b;
++ mutex_unlock(&nt_cc_registry_lock);
++ return 0;
++fail:
++ mutex_lock(&nt_cc_registry_lock);
++ nt_cc_reservation = NULL;
++ mutex_unlock(&nt_cc_registry_lock);
++ return error;
++}
++static const struct of_device_id nt_cc_match[] = {
++ { .compatible = "openipc,nt98513-cc-bank-v1" }, { }
++};
++static struct platform_driver nt_cc_driver = {
++ .probe = nt_cc_probe,
++ .driver = { .name = "nt98513-cc-bank", .of_match_table = nt_cc_match, .suppress_bind_attrs = true },
++};
++static int __init nt_cc_init(void) { return platform_driver_register(&nt_cc_driver); }
++subsys_initcall(nt_cc_init);
++MODULE_LICENSE("GPL");
+--- /dev/null
++++ b/drivers/soc/nt98513/cc-core.c
+@@ -0,0 +1,71 @@
++// SPDX-License-Identifier: GPL-2.0-only
++#ifdef __KERNEL__
++#include <linux/errno.h>
++#else
++#include <errno.h>
++#endif
++#include "nt98513_cc_bank_core.h"
++static int index_of(unsigned r) { return r == 2 ? 0 : r == 4 ? 1 : -1; }
++int nt_cc_core_cause(const struct nt_cc_core *s, unsigned r)
++{
++ int i = index_of(r);
++ return i < 0 ? -EINVAL : s->cause[i];
++}
++static int uncertain(struct nt_cc_core *s, unsigned r, int error, unsigned phase)
++{
++ int i = index_of(r);
++ if (i >= 0) {
++  if (!s->cause[i]) { s->cause[i] = error; s->failure[i] = phase; }
++  s->phase[i] = NT_CC_UNCERTAIN;
++ }
++ s->uncertain = 1;
++ return error;
++}
++int nt_cc_core_enter(struct nt_cc_core *s, unsigned r)
++{
++ int i = index_of(r);
++ if (i < 0) return -EINVAL;
++ if (s->cause[i]) return s->cause[i];
++ if (s->uncertain) return -EIO;
++ if (s->active) return -EBUSY;
++ s->active = r;
++ s->acquired = 0;
++ s->attempted = 0;
++ return 0;
++}
++int nt_cc_core_acquire(struct nt_cc_core *s, const struct nt_cc_io *io, unsigned r)
++{
++ int error, i = index_of(r);
++ if (i < 0 || s->active != r) return -EINVAL;
++ if (s->uncertain) return s->cause[i] ? s->cause[i] : -EIO;
++ if (s->attempted) return uncertain(s, r, -EIO, NT_CC_FAIL_PROTOCOL);
++ s->attempted = 1;
++ if (io->grant(io->context) & (1u << r)) return uncertain(s, r, -EIO, NT_CC_FAIL_STALE);
++ s->phase[i] = NT_CC_REQUESTED;
++ io->write(io->context, NT_CC_REQUEST, 1u << r);
++ error = io->wait(io->context, 1u << r, 1);
++ /* No timeout release: the hardware cancellation contract is unknown. */
++ if (error) return uncertain(s, r, error, NT_CC_FAIL_ACQUIRE);
++ s->acquired = 1;
++ s->phase[i] = NT_CC_OWNED;
++ return 0;
++}
++int nt_cc_core_release(struct nt_cc_core *s, const struct nt_cc_io *io, unsigned r)
++{
++ int error, i = index_of(r);
++ if (i < 0 || s->active != r) return -EINVAL;
++ if (s->uncertain) return s->cause[i] ? s->cause[i] : -EIO;
++ if (!s->acquired) return uncertain(s, r, -EIO, NT_CC_FAIL_PROTOCOL);
++ io->write(io->context, NT_CC_RELEASE, 1u << r);
++ error = io->wait(io->context, 1u << r, 0);
++ s->acquired = 0;
++ if (error) return uncertain(s, r, error, NT_CC_FAIL_RELEASE);
++ s->phase[i] = NT_CC_RELEASED;
++ return 0;
++}
++void nt_cc_core_leave(struct nt_cc_core *s)
++{
++ if (s->acquired) uncertain(s, s->active, -EIO, NT_CC_FAIL_ABANDONED);
++ s->active = 0;
++ s->acquired = 0;
++}
+--- /dev/null
++++ b/drivers/soc/nt98513/nt98513_cc_bank_core.h
+@@ -0,0 +1,20 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef NT98513_CC_BANK_CORE_H
++#define NT98513_CC_BANK_CORE_H
++enum nt_cc_reg { NT_CC_REQUEST, NT_CC_RELEASE };
++enum nt_cc_phase { NT_CC_IDLE, NT_CC_REQUESTED, NT_CC_OWNED, NT_CC_RELEASED, NT_CC_UNCERTAIN };
++struct nt_cc_io {
++ void *context;
++ unsigned (*grant)(void *);
++ void (*write)(void *, enum nt_cc_reg, unsigned);
++ int (*wait)(void *, unsigned mask, int want_set);
++};
++/* One externally serialized bank; cause[] indexes resource2 then resource4. */
++enum nt_cc_failure { NT_CC_FAIL_NONE, NT_CC_FAIL_STALE, NT_CC_FAIL_ACQUIRE, NT_CC_FAIL_RELEASE, NT_CC_FAIL_ABANDONED, NT_CC_FAIL_PROTOCOL };
++struct nt_cc_core { int cause[2]; unsigned phase[2], failure[2], uncertain, active, acquired, attempted; };
++int nt_cc_core_cause(const struct nt_cc_core *, unsigned);
++int nt_cc_core_enter(struct nt_cc_core *, unsigned);
++int nt_cc_core_acquire(struct nt_cc_core *, const struct nt_cc_io *, unsigned);
++int nt_cc_core_release(struct nt_cc_core *, const struct nt_cc_io *, unsigned);
++void nt_cc_core_leave(struct nt_cc_core *);
++#endif
+--- /dev/null
++++ b/include/linux/soc/nt98513_cc_bank.h
+@@ -0,0 +1,18 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef NT98513_CC_BANK_H
++#define NT98513_CC_BANK_H
++struct device;
++struct nt98513_cc_bank;
++struct nt98513_cc_bank *devm_nt98513_cc_bank_get(struct device *);
++/* Sleepable. Success retains bank lock; failure unlocks without I/O. */
++int nt_cc_enter(struct nt98513_cc_bank *, unsigned resource);
++int nt_cc_acquire_locked(struct nt98513_cc_bank *, unsigned resource);
++int nt_cc_release_locked(struct nt98513_cc_bank *, unsigned resource);
++/* Never implicitly cancels/releases a hardware request. */
++void nt_cc_leave(struct nt98513_cc_bank *);
++/* Non-sleeping snapshots; uncertainty is sticky for this supplier lifetime. */
++int nt_cc_status(struct nt98513_cc_bank *);
++/* First failure phase: 0 none, 1 stale, 2 acquire, 3 release, 4 abandoned, 5 protocol. */
++int nt_cc_failure_phase(struct nt98513_cc_bank *, unsigned resource);
++int nt_cc_cause(struct nt98513_cc_bank *, unsigned resource);
++#endif
