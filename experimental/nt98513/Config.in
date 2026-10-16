@@ -1,1 +1,1 @@
-# No proprietary, networking or vendor packages in this experimental lane.
+source "$BR2_EXTERNAL_NT98513_PATH/package/divinus-owned-nt98513/Config.in"

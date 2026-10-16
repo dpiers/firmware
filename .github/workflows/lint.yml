@@ -3,6 +3,7 @@ on:
   pull_request:
     branches:
       - master
+      - codex/nt98513-ram-console
   # shell-tests.yml deliberately has no push trigger, and its reasoning -- every
   # commit on master was already checked on its pull request -- holds only while
   # master has not moved between a PR's last run and its merge. That is exactly

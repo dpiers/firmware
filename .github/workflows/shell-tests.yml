@@ -3,6 +3,7 @@ on:
   pull_request:
     branches:
       - master
+      - codex/nt98513-ram-console
   # Deliberately no push trigger. Every commit that reaches master was already
   # parsed and tested by these same jobs on its pull request, so re-running them
   # on the merge commit only re-proves what was just proven.
@@ -126,6 +127,36 @@ jobs:
             general/overlay/usr/sbin/extutils > /tmp/extutils.stripped
           SRC=/tmp/extutils.stripped bash .github/scripts/test_check_mac.sh
 
+  nt98513-owned-input:
+    name: NT98513 optional package source and target wiring
+    if: >-
+      github.repository == 'OpenIPC/firmware' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && !github.event.repository.private)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: dpiers/divinus
+          ref: 5e9dc9cb703d4479803e057250d31b682949497a
+          path: .ci-divinus-source
+          persist-credentials: false
+      - name: Verify exact offline archive, package targets and RAM-image guards
+        env:
+          NT98513_TEST_DIVINUS_CHECKOUT: ${{ github.workspace }}/.ci-divinus-source
+        run: |
+          python3 --version
+          git --version
+          make --version
+          python3 -m unittest discover -s experimental/nt98513/tests -p 'test_*.py'
+          python3 .github/scripts/ci-matrix.py --self-test
+
   # Only sysupgrade was ever parse-checked; every other script in the image --
   # the init scripts, /etc/profile, /init on initramfs boards, the vendor load_*
   # scripts that insert the SoC drivers -- reached cameras without anything
@@ -225,6 +256,7 @@ jobs:
   shell-tests-gate:
     name: Shell Tests Gate
     needs:
+      - nt98513-owned-input
       - load-hisilicon-parsing
       - sysupgrade-verify
       - camera-mac
@@ -249,6 +281,9 @@ jobs:
           echo "load-hisilicon=${{ needs.load-hisilicon-parsing.result }} sysupgrade=${{ needs.sysupgrade-verify.result }} camera-mac=${{ needs.camera-mac.result }} crashlog=${{ needs.crashlog-capture.result }} excludes=${{ needs.excludes-report.result }} ca-bundle=${{ needs.ca-bundle-lite.result }} shell-parse=${{ needs.shipped-shell-parse.result }} build-request=${{ needs.build-request.result }} network-failover=${{ needs.network-failover.result }}"
           # 'skipped' is not accepted, for the reason given in lint.yml: a
           # skipped job would take this context green having checked nothing.
+          if [ "${{ needs.nt98513-owned-input.result }}" != "success" ]; then
+            echo "::error::NT98513 optional package checks did not succeed"; exit 1
+          fi
           if [ "${{ needs.load-hisilicon-parsing.result }}" != "success" ]; then
             echo "::error::load_hisilicon os_mem_size derivation did not succeed"; exit 1
           fi
