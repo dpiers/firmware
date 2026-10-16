@@ -1,0 +1,12 @@
+config BR2_PACKAGE_DIVINUS_OWNED_NT98513
+	bool "Divinus NT98513 owned encoded input"
+	depends on BR2_mipsel && BR2_mips_32r2
+	depends on BR2_TOOLCHAIN_HAS_THREADS
+	depends on BR2_STATIC_LIBS
+	help
+	  Optional RTSP consumer of /dev/nt98513-capture. Requires a separately
+	  admitted capture endpoint and external keeper. No automatic startup.
+
+	  Source: https://github.com/dpiers/divinus (pinned owner experiment).
+	  Prepare the exact source archive offline as described in the
+	  experimental/nt98513 README; no network fetch occurs at runtime.

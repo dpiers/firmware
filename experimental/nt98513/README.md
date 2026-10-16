@@ -69,3 +69,90 @@ The RAM-image integration tests invoke the actual make target on tiny generated 
 The accepted earlier build passed soft-float ABI metadata checks for BusyBox, 1,406 libc members, 1,874 libgcc members and five CRT objects. Independent checks matched raw LOAD bytes, embedded CPIO and accepted DT; 20 bounded QEMU-MIPSel 24Kc userspace invocations passed without running init, mounts or device operations. Its final ELF/raw/CPIO SHA256 values are respectively `dae328ffdc49d9464ed2a4c771f42dec21657c3d68831bdb4790f0785b3c6e59`, `8e7e665e80c7671d15dfbb102a36f64ba0cb3e0bd1e94a64c80aefd84219f9c8`, and `670da13685578094d8264c62cc117e7c524ae9b10c7441d62a9fc0b2d35cbc27`. No exhaustive instruction scan is claimed. Binaries and private build receipts are intentionally outside this source-only payload.
 
 That image loads at physical `0x00101000`, enters at `0x0027dff0` (ELF `0x8027dff0`), and occupies 3,289,184 bytes including BSS and its 470,528-byte embedded CPIO. Unpacked regular-file pages add 507,904 bytes. Allocator metadata, process memory and transient unpacking are additional; admitted RAM `[0x00101000,0x03400000)` is not a runtime free-memory measurement. Recalculate all addresses and sizes for a new build.
+
+## Optional owned encoded-input consumer
+
+The separate `nt98513-owned-input` target adds the default-off
+`BR2_PACKAGE_DIVINUS_OWNED_NT98513` package. The existing console defconfig and
+`nt98513-ram*` targets retain their defaults. The owned-input defconfig enables
+TCP/IP socket APIs and BusyBox `ifconfig`, interface status and `route`. It does
+not add a NIC driver, automatic interface setup, DHCP or any service.
+
+This is a manual consumer of a separately admitted `/dev/nt98513-capture`
+endpoint with a separate keeper/producer. The package installs `divinus-owned`,
+an inactive configuration example, application/package documentation and five
+license/notice files. It installs no active configuration, credentials, device
+node, endpoint, keeper or autostart. Empty example credentials intentionally
+cannot start the application. Closing this application does not stop RTOS
+acquisition. Kernel socket support is not Ethernet or capture hardware support.
+
+### Prepare the source once, then build offline
+
+The source is the owner experiment at
+<https://github.com/dpiers/divinus>, commit
+`5e9dc9cb703d4479803e057250d31b682949497a`. Its production source ID is
+`cfc60e6dcd9fa79e13731b6f07537050209e28609b2d7b7cae7fbbb81da3c006`.
+Provide a local Git checkout containing that commit, mounted read-only at
+`/divinus`. Preparation reads the commit's Git blobs, not current HEAD or working
+files; the later CI-only revision is not the documentation pin for this archive.
+No GitHub-generated archive or compiled binary is substituted.
+
+Use absolute paths without symlink components for the cache and build output.
+The writable cache must be outside both source checkouts. The helper combines
+47 hash-checked upstream files with the package's exact `PACKAGE.md`, verifies
+all 48 members, and reproduces the source-only archive with SHA-256
+`ed4b016b32d00b5b36eb98d5395dca28bc2a74161164918eeac45c57e8051f85`.
+It refuses mismatched existing output and publishes only after every check
+passes. An identical existing archive is preserved. No source download occurs
+inside this helper; obtain the pinned public checkout before the offline build.
+
+```sh
+make -C /firmware nt98513-owned-input-prepare-source \
+  NT98513_DIVINUS_CHECKOUT=/divinus \
+  NT98513_DIVINUS_SOURCE_DIR=/work/divinus-source
+make -C /firmware nt98513-owned-input-source \
+  NT98513_BUILDROOT=/work/buildroot-2024.02.10 \
+  NT98513_OUTPUT=/work/output-owned-input \
+  NT98513_DIVINUS_SOURCE_DIR=/work/divinus-source
+# Re-enter the retained build environment with networking disabled:
+make -C /firmware nt98513-owned-input \
+  NT98513_BUILDROOT=/work/buildroot-2024.02.10 \
+  NT98513_OUTPUT=/work/output-owned-input \
+  NT98513_DIVINUS_SOURCE_DIR=/work/divinus-source
+make -C /work/buildroot-2024.02.10 O=/work/output-owned-input \
+  BR2_EXTERNAL=/firmware/experimental/nt98513 \
+  NT98513_DIVINUS_SOURCE_DIR=/work/divinus-source legal-info
+```
+
+`nt98513-owned-input-defconfig` is also available separately. These targets
+check the full archive hash before invoking Buildroot and pass the same cache
+path to each recursive Make. Use a new, empty output or one already configured
+for this package; console and unrelated nonempty outputs are refused. Raw
+Buildroot invocations also require `NT98513_DIVINUS_SOURCE_DIR` when the package
+is enabled. Buildroot's package hash check remains active. Retain legal-info's
+source archive, package metadata and all five license files, in addition to the
+custom Linux/Buildroot legal inputs described above.
+
+Host-only checks require a local copy of the same pinned source:
+
+```sh
+NT98513_TEST_DIVINUS_CHECKOUT=/divinus \
+  python3 -m unittest discover -s experimental/nt98513/tests -p 'test_*.py'
+```
+
+The host CI job runs these checks with pinned public source and read-only
+permissions. It tests source preparation, actual Make forwarding and existing
+rootfs/image guard logic. Its Buildroot recorder does not compile firmware;
+it neither repeats the application's protocol test harness nor establishes a
+complete integration build. The existing conservative CI selector still treats
+experimental paths as unknown for a ready PR; a draft PR skips its large board
+build matrix. No release workflow is changed.
+
+The package and networking fragment enlarge the kernel and CPIO. Package a
+completed owned-input output using `nt98513-ram-image` with its own output path,
+explicit timestamp and checked candidate staging address. Recompute the ELF,
+BSS, cache-maintenance envelope, CPIO size and unpacked resident pages; the
+console image measurements above do not describe this optional image. A normal
+checkout full build/legal/repeat/image validation remains required before build
+acceptance. No target execution, installed endpoint, live free-RAM, capture,
+Ethernet or boot acceptance is claimed by these source/host checks.

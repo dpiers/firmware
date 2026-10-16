@@ -1,0 +1,7 @@
+# Exact accepted normal-checkout source and complete notices.
+sha256  ed4b016b32d00b5b36eb98d5395dca28bc2a74161164918eeac45c57e8051f85  divinus-owned-nt98513-cfc60e6dcd9fa79e13731b6f07537050209e28609b2d7b7cae7fbbb81da3c006.tar.gz
+sha256  d179fe96d9472a3b6695a0eeaeab7c29f79ce05283d2f05f18c3a7c783b8f381  LICENSE
+sha256  d7ce641e76486fc2822e1f7861ac64cda194c8e505b759561e4b3297c327e40e  COPYING
+sha256  f6b78c087c3ebdf0f3c13415070dd480a3f35d8fc76f3d02180a407c1c812f79  licenses/GPL-2.0
+sha256  8e378ab93586eb55135d3bc119cce787f7324f48394777d00c34fa3d0be3303f  licenses/Linux-syscall-note
+sha256  3abe64825faa9690fde30e7ac17159e9bf87008eb78c7410613d8a0dbe657e70  licenses/MIT-owned-rtcp

@@ -1,1 +1,1 @@
-# The external tree uses source-built upstream Buildroot packages only.
+include $(sort $(wildcard $(BR2_EXTERNAL_NT98513_PATH)/package/*/*.mk))
