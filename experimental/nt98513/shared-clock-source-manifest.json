@@ -1,0 +1,61 @@
+{
+  "accepted_root_receipt_sha256": "57c8c5b41555b02f6a2f44991a88768e92f44f6384f1f4e793cd381192084b88",
+  "scope": "DAN-283 production files and selected bindings; exact bytes, integration wrappers separate.",
+  "files": [
+    {
+      "accepted": "evidence/nt98513-shared-clock-owner-implementation-v1/source-final-v1/Kconfig",
+      "kernel": "drivers/clk/nt98513-shared/Kconfig",
+      "sha256": "585094e929eff7fb16ca70769814401d1f0cd7c4bfa07bf7aabc8f517a0de336"
+    },
+    {
+      "accepted": "evidence/nt98513-shared-clock-owner-implementation-v1/source-final-v1/Makefile",
+      "kernel": "drivers/clk/nt98513-shared/Makefile",
+      "sha256": "88291720374c667e9722bf83ab23e6859dfbb214e939f40b8cffcb5a6a345b37"
+    },
+    {
+      "accepted": "evidence/nt98513-shared-clock-owner-implementation-v1/source-final-v1/core/nt98513_clock_txn.c",
+      "kernel": "drivers/clk/nt98513-shared/core/nt98513_clock_txn.c",
+      "sha256": "37c2f2055aca9f72a4b6e0105f7b9a138a631eec8a58caad8b19ce8bd8b89263"
+    },
+    {
+      "accepted": "evidence/nt98513-shared-clock-owner-implementation-v1/source-final-v1/driver/nt98513_eth_clock.c",
+      "kernel": "drivers/clk/nt98513-shared/driver/nt98513_eth_clock.c",
+      "sha256": "e5d320de10061df0f71f7a42baa0f8d7fd7a11ef26d25df00da49e3273cf952d"
+    },
+    {
+      "accepted": "evidence/nt98513-shared-clock-owner-implementation-v1/source-final-v1/driver/nt98513_clock_owner.c",
+      "kernel": "drivers/clk/nt98513-shared/driver/nt98513_clock_owner.c",
+      "sha256": "32ec9e3b0acd7020f3c581383597863ba103ef15f6ad81c272fa794b0ce469a0"
+    },
+    {
+      "accepted": "evidence/nt98513-shared-clock-owner-implementation-v1/source-final-v1/driver/nt98513_wdt_shared.c",
+      "kernel": "drivers/clk/nt98513-shared/driver/nt98513_wdt_shared.c",
+      "sha256": "c66d30a43f1f7623e58ccde4dd8e8014a77228bf62c8c603dea78a10aeb26f35"
+    },
+    {
+      "accepted": "evidence/nt98513-shared-clock-owner-implementation-v1/source-final-v1/include/nt98513_clock_private.h",
+      "kernel": "drivers/clk/nt98513-shared/include/nt98513_clock_private.h",
+      "sha256": "9cc493daa8c6faf4bdb041a4c93b17c859112d14b11686a0541dacbde94ac2a7"
+    },
+    {
+      "accepted": "evidence/nt98513-shared-clock-owner-implementation-v1/source-final-v1/include/nt98513_clock_txn.h",
+      "kernel": "drivers/clk/nt98513-shared/include/nt98513_clock_txn.h",
+      "sha256": "3563685bc458b4d213b4c582ca8a471bd76a5057ad4b7f461f073740f89b883a"
+    },
+    {
+      "accepted": "evidence/nt98513-shared-clock-owner-implementation-v1/source-final-v1/include/nt98513_clock_owner.h",
+      "kernel": "drivers/clk/nt98513-shared/include/nt98513_clock_owner.h",
+      "sha256": "125277efd33dd586e0f24e9ab569dc018885b80fd60db3d611e90dcd80b9fa13"
+    },
+    {
+      "accepted": "evidence/nt98513-shared-clock-owner-implementation-v1/source-final-v1/bindings/openipc,nt98513-shared-clock-v1.yaml",
+      "kernel": "Documentation/devicetree/bindings/clock/openipc,nt98513-shared-clock-v1.yaml",
+      "sha256": "e833c0c4d006faac682cd352befd6ac6c38d758b352dc13fdf54b297e2064dc8"
+    },
+    {
+      "accepted": "evidence/nt98513-shared-clock-owner-implementation-v1/source-final-v1/bindings/openipc,nt98513-watchdog-shared-v1.yaml",
+      "kernel": "Documentation/devicetree/bindings/watchdog/openipc,nt98513-watchdog-shared-v1.yaml",
+      "sha256": "83a7eb867bfd3dfda8db030462da2e1e01536c920ad434939924ee7924eeb122"
+    }
+  ]
+}

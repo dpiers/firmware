@@ -44,3 +44,13 @@ nt98513-owned-input-source: nt98513-owned-input-defconfig
 nt98513-owned-input: nt98513-owned-input-defconfig
 	$(MAKE) -C "$(NT98513_BUILDROOT)" O="$(NT98513_OUTPUT)" BR2_EXTERNAL="$(NT98513_EXTERNAL)" \
 		NT98513_DIVINUS_SOURCE_DIR="$(NT98513_DIVINUS_SOURCE_DIR)" all
+
+# Third, console-based experimental image. Use a new dedicated output.
+.PHONY: nt98513-shared-clock-defconfig nt98513-shared-clock-source nt98513-shared-clock
+nt98513-shared-clock-defconfig:
+	python3 "$(NT98513_EXTERNAL)/tools/check_shared_clock_output.py" "$(NT98513_OUTPUT)"
+	$(MAKE) -C "$(NT98513_BUILDROOT)" O="$(NT98513_OUTPUT)" BR2_EXTERNAL="$(NT98513_EXTERNAL)" nt98513_shared_clock_defconfig
+nt98513-shared-clock-source: nt98513-shared-clock-defconfig
+	$(MAKE) -C "$(NT98513_BUILDROOT)" O="$(NT98513_OUTPUT)" BR2_EXTERNAL="$(NT98513_EXTERNAL)" source
+nt98513-shared-clock: nt98513-shared-clock-defconfig
+	$(MAKE) -C "$(NT98513_BUILDROOT)" O="$(NT98513_OUTPUT)" BR2_EXTERNAL="$(NT98513_EXTERNAL)" all
