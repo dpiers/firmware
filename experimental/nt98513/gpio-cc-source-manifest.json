@@ -1,0 +1,274 @@
+{
+  "schema_version": 1,
+  "scope": "Final patch4 composition, not an unchanged patch3 import claim. Full Linux-tree patch/config/link remains separate.",
+  "base_commit": "0c24984a3276bb6e99e8ec5a41a91cca7bb9332c",
+  "source_receipt_sha256": "2e91958c06305d06ea8c8b5ebee1459afa49d94e8fadd6ead59e1a8858231707",
+  "source_root_acceptance_sha256": "f4fa9785c9ee60d05d5d2a66dced8b5877c14d05b49945d5495f03a73ae026ee",
+  "patch4_sha256": "6ac2c082da275f3e40cf2a88e1d293211dc5a3770a4aae595dff896b5a410ea7",
+  "kernel_files": [
+    {
+      "path": "Documentation/devicetree/bindings/clock/openipc,nt98513-shared-clock-v2.yaml",
+      "source": "integration/bindings/openipc,nt98513-shared-clock-v2.yaml",
+      "old_sha256": null,
+      "sha256": "b8f13d6bb8a99dda523d2531d741767f030006a042adaa781a2a777392b62b3a"
+    },
+    {
+      "path": "Documentation/devicetree/bindings/gpio/openipc,nt98513-gpio.yaml",
+      "source": "integration/bindings/openipc,nt98513-gpio.yaml",
+      "old_sha256": null,
+      "sha256": "c1e2901875ff068ba2fc40c38a153899854f690d9fc5fdb4c34cc943b7ea0440"
+    },
+    {
+      "path": "Documentation/devicetree/bindings/soc/openipc,nt98513-cc-bank.yaml",
+      "source": "integration/bindings/openipc,nt98513-cc-bank.yaml",
+      "old_sha256": null,
+      "sha256": "052d6c35a66074a5e9202defa2736b69825cd3729cfaf645c08a56c14acab5fb"
+    },
+    {
+      "path": "arch/mips/boot/dts/nt98513/nt98513-shared-clock.dts",
+      "source": null,
+      "old_sha256": "060ba52fd5b1048d26caa8ac35f38eea1a6973ca048acb92dcc9d7d0005a6556",
+      "sha256": "51629467d857364b539bb611d27f5843971533022ca864a2ef0d1efba5c5ca46"
+    },
+    {
+      "path": "arch/mips/nt98513/Kconfig.shared-clock",
+      "source": null,
+      "old_sha256": "c423dcc9fc98895176ced6d47470e4e9aa7c4e4bef1645a7a993a08c96299b40",
+      "sha256": "2494060a586d594f96b91336a6c314201075a8075ba92d1fce66559e6d45af17"
+    },
+    {
+      "path": "arch/mips/nt98513/check-clock-config.sh",
+      "source": null,
+      "old_sha256": "2567d34d20d4a43135f5a74d8f4f6c4e95d9411762890221184c790411f371aa",
+      "sha256": "4e474685703d658381d71257336ada7b66fd222466dec30718ba7b9d3880b40f"
+    },
+    {
+      "path": "arch/mips/nt98513/clock-config-guard.mk",
+      "source": null,
+      "old_sha256": "ea5727ce0975ae6e38b0b841b56a0e7e51cffca7939634f226f59fe90c57b16d",
+      "sha256": "dded7564fd654ea98e9d0a026d0ffcc1804e8a532747f4c621b3175bd2fc1325"
+    },
+    {
+      "path": "drivers/clk/nt98513-shared/Kconfig",
+      "source": null,
+      "old_sha256": "585094e929eff7fb16ca70769814401d1f0cd7c4bfa07bf7aabc8f517a0de336",
+      "sha256": "9c983566a47309bd79523f99c22e88f7398884391357c730ad7885ab55fac53b"
+    },
+    {
+      "path": "drivers/clk/nt98513-shared/core/nt98513_clock_txn.c",
+      "source": "core/nt98513_clock_txn.c",
+      "old_sha256": "37c2f2055aca9f72a4b6e0105f7b9a138a631eec8a58caad8b19ce8bd8b89263",
+      "sha256": "2c698a42d0afec79e6f7eba529ea5263bd6a6dbc0b7b83753a566530f6c4fdba"
+    },
+    {
+      "path": "drivers/clk/nt98513-shared/driver/nt98513_clock_owner.c",
+      "source": "driver/nt98513_clock_owner.c",
+      "old_sha256": "32ec9e3b0acd7020f3c581383597863ba103ef15f6ad81c272fa794b0ce469a0",
+      "sha256": "687bc4b8b7ca568ab6ade22bff613c7afd945846f9b599b627f06f041a5429f6"
+    },
+    {
+      "path": "drivers/clk/nt98513-shared/include/nt98513_clock_private.h",
+      "source": "include/nt98513_clock_private.h",
+      "old_sha256": "9cc493daa8c6faf4bdb041a4c93b17c859112d14b11686a0541dacbde94ac2a7",
+      "sha256": "9ee8db7f749c5f97f162b385e6688271e01837ccba003434587592dd732281a2"
+    },
+    {
+      "path": "drivers/clk/nt98513-shared/include/nt98513_clock_txn.h",
+      "source": "include/nt98513_clock_txn.h",
+      "old_sha256": "3563685bc458b4d213b4c582ca8a471bd76a5057ad4b7f461f073740f89b883a",
+      "sha256": "9033bf8b05a3e60062b86af80e857eeba38bffd56ee3abcc8efc35809acc69e3"
+    },
+    {
+      "path": "drivers/gpio/Makefile",
+      "source": null,
+      "old_sha256": "303679b5c503829cf178344ccbea12db1c24b7ba15d2bb79952b979d627d45b7",
+      "sha256": "367db9dac38575b302590e6948c42456a02155a69c15955345aadabab4400b08"
+    },
+    {
+      "path": "drivers/gpio/nt98513/Kconfig",
+      "source": null,
+      "old_sha256": null,
+      "sha256": "6e4ed89e518b26c385e86ea81c588fc35de9bf0dea849be3a40e02f11a685168"
+    },
+    {
+      "path": "drivers/gpio/nt98513/Makefile",
+      "source": null,
+      "old_sha256": null,
+      "sha256": "4cf398b6b2468372fab905fc95b9683ae9a9a7345b77febb60617caecba45718"
+    },
+    {
+      "path": "drivers/gpio/nt98513/gpio-core.c",
+      "source": "core/nt98513_gpio.c",
+      "old_sha256": null,
+      "sha256": "e65c115782b7d8d9316bd462a45cc7ea4adbedf79f005b5ee298af0bc9d5e67a"
+    },
+    {
+      "path": "drivers/gpio/nt98513/gpio-nt98513.c",
+      "source": "driver/gpio-nt98513.c",
+      "old_sha256": null,
+      "sha256": "905aab55dba0fe3aafb38e77361e83c2219cb9af3cd04ce8e7f617b4d8752657"
+    },
+    {
+      "path": "drivers/gpio/nt98513/nt98513_gpio_core.h",
+      "source": "include/nt98513_gpio_core.h",
+      "old_sha256": null,
+      "sha256": "c77d68f4f945a8f67c34ba785825ccf4d883eb218479e13f0f0b818c26c5cb07"
+    },
+    {
+      "path": "drivers/soc/Makefile",
+      "source": null,
+      "old_sha256": "b833ab8944e438b0c08e1daeb41e5c5c1ffabcdba6d4776001f8d3e6a427f509",
+      "sha256": "4105de2905bae74aef6bb213723490ff3fb6e29f4e3801e7d185c6e6634e572e"
+    },
+    {
+      "path": "drivers/soc/nt98513/Kconfig",
+      "source": null,
+      "old_sha256": null,
+      "sha256": "d72debf2a5e09d4fdaf44d5066b34deafb24f98dee6bcab62238742509fff79a"
+    },
+    {
+      "path": "drivers/soc/nt98513/Makefile",
+      "source": null,
+      "old_sha256": null,
+      "sha256": "c6bdddaedb95389313084e4f4713d632bb87f7e6cf84dbc94409c82def5f21dc"
+    },
+    {
+      "path": "drivers/soc/nt98513/cc-bank.c",
+      "source": "driver/nt98513_cc_bank.c",
+      "old_sha256": null,
+      "sha256": "7af03ace5b362776dcc65f72955df2a390701d80a24a8de78d1c0dce26e67856"
+    },
+    {
+      "path": "drivers/soc/nt98513/cc-core.c",
+      "source": "core/nt98513_cc_bank.c",
+      "old_sha256": null,
+      "sha256": "caa8b36fe10778109f0211b37fcd7c99a6f5911cd4cd202c4a85f8b2e00e5c9a"
+    },
+    {
+      "path": "drivers/soc/nt98513/nt98513_cc_bank_core.h",
+      "source": "include/nt98513_cc_bank_core.h",
+      "old_sha256": null,
+      "sha256": "930531f4b8ce5f4ce73e513a1e6320e47649767ce51f07e68e73719b86a470a6"
+    },
+    {
+      "path": "include/linux/soc/nt98513_cc_bank.h",
+      "source": "include/nt98513_cc_bank.h",
+      "old_sha256": null,
+      "sha256": "c24ca79ba52c65b6e35fc21fef7629a2d3c2757068d4b4795a2f6aecc081afe8"
+    }
+  ],
+  "partial_upstream_files": [
+    "drivers/gpio/Makefile",
+    "drivers/soc/Makefile"
+  ],
+  "historical_donor_manifest": "shared-clock-source-manifest.json",
+  "unchanged_final_imports": [
+    {
+      "accepted": "evidence/nt98513-shared-clock-owner-implementation-v1/source-final-v1/driver/nt98513_eth_clock.c",
+      "kernel": "drivers/clk/nt98513-shared/driver/nt98513_eth_clock.c",
+      "sha256": "e5d320de10061df0f71f7a42baa0f8d7fd7a11ef26d25df00da49e3273cf952d"
+    },
+    {
+      "accepted": "evidence/nt98513-shared-clock-owner-implementation-v1/source-final-v1/driver/nt98513_wdt_shared.c",
+      "kernel": "drivers/clk/nt98513-shared/driver/nt98513_wdt_shared.c",
+      "sha256": "c66d30a43f1f7623e58ccde4dd8e8014a77228bf62c8c603dea78a10aeb26f35"
+    },
+    {
+      "accepted": "evidence/nt98513-shared-clock-owner-implementation-v1/source-final-v1/include/nt98513_clock_owner.h",
+      "kernel": "drivers/clk/nt98513-shared/include/nt98513_clock_owner.h",
+      "sha256": "125277efd33dd586e0f24e9ab569dc018885b80fd60db3d611e90dcd80b9fa13"
+    }
+  ],
+  "unchanged_external_files": [
+    {
+      "path": "targets.mk",
+      "sha256": "97a045ebcd5bb1575c5f104dd096613394ca4e63958c636bc4c9f393473863ea"
+    },
+    {
+      "path": "external.mk",
+      "sha256": "5787f6153f5ec2e7b7b39b847e36094a4d09e912ad2b00d6e56a9a293403d952"
+    },
+    {
+      "path": "Config.in",
+      "sha256": "bcfb6d66d4144ce8766c1ce16329ca820321c4f787699968428a675c67fc33b4"
+    },
+    {
+      "path": "configs/nt98513_ram_defconfig",
+      "sha256": "f47acb48062cdcefeed31e479735b37fea62a4c37b8b8596a8a455f78bfe5b56"
+    },
+    {
+      "path": "configs/nt98513_owned_input_defconfig",
+      "sha256": "dbd41c175a268ad712f30558cd2d799dce93f5a03810835ee19ead26405807a5"
+    },
+    {
+      "path": "configs/nt98513_shared_clock_defconfig",
+      "sha256": "be7d9109a0595ae2582f5d295c088051aaa3fd0f435e3fcbd06b8e83a05a40da"
+    },
+    {
+      "path": "board/linux.config",
+      "sha256": "e9d7f9641b13a2d0d661b1523cf9cced9539786e367b45d2decc0afccb30f84a"
+    },
+    {
+      "path": "board/owned-input-network.config",
+      "sha256": "35242d2f256e56ed4cc77f50a05e91a36d22cb9d4880203c6df4cdf0c96fd7ac"
+    },
+    {
+      "path": "board/busybox.config",
+      "sha256": "b88783d5140a0576fa46e7610fc6d2de3fbb607ddc7819c422f89ae30da06bba"
+    },
+    {
+      "path": "board/owned-input-network-busybox.config",
+      "sha256": "00b33476121de5f79fdf2596ac13424d5ef4fb70c85fe297de6158b262ad8c22"
+    },
+    {
+      "path": "board/normalize-rootfs.py",
+      "sha256": "6514be5f42de395ad6685147e995dc5a12cd74287fa46e7dd04143471c10d7d3"
+    },
+    {
+      "path": "tools/check_shared_clock_output.py",
+      "sha256": "5b7602cd40e02e9fce5a05f0ecfab254b7f59891ae0df80d1c792dfdeb15240a"
+    },
+    {
+      "path": "package/divinus-owned-nt98513/Config.in",
+      "sha256": "d89c1166cccdd559b6286e3a25efafbbabf245a4c4fc2a0a14e730e14c82d658"
+    },
+    {
+      "path": "package/divinus-owned-nt98513/divinus-owned-nt98513.mk",
+      "sha256": "2cae1a6b9e5363b477ddcc1300e4733f01faedf24d905aa1d6613d7c8ef5f2a7"
+    },
+    {
+      "path": "package/divinus-owned-nt98513/divinus-owned-nt98513.hash",
+      "sha256": "b58677d77c163ced6cf8d63d5c31decb2bc341f774a1b927d72693cfba83e74b"
+    },
+    {
+      "path": "package/divinus-owned-nt98513/source-manifest.json",
+      "sha256": "50e291ceb8380e6982e8ced0a4810384f89799e498f3260589f6710a18a53543"
+    },
+    {
+      "path": "shared-clock-source-manifest.json",
+      "sha256": "92e2d00a4245bc261fd4d2f0ccb8db462772f9310c04f4e6ea30a9dc977b1fd7"
+    },
+    {
+      "path": "patches/linux/0001-independent-nt98513-bsp.patch",
+      "sha256": "388246751dda930e121c4c0f810740e00d601f6f5cf11726f6a8cbd15483aed6"
+    },
+    {
+      "path": "patches/linux/0002-independent-nt98513-watchdog.patch",
+      "sha256": "221ff739ac56b9939aa44f2705e1e4df44a2a272f3a47ed7beedfc5aecadf650"
+    },
+    {
+      "path": "patches/linux/0003-nt98513-shared-clock-board.patch",
+      "sha256": "6f741b83370c70849f27d4e0bea45a78fdb467fcb4e492814cc2e666d080cc90"
+    }
+  ],
+  "copies": [
+    {
+      "path": "board/shared-clock.config",
+      "sha256": "f8d9b416dce5e3388f52fe0e1a3eae1455fa202950f01a1509283468c910f789"
+    },
+    {
+      "path": "tools/check_shared_clock_kernel.sh",
+      "sha256": "c1b45bb4ae0bf857b27a2d2555138797e06f369bebf224191363c00c9b8de925"
+    }
+  ]
+}

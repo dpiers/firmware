@@ -1,0 +1,863 @@
+--- /dev/null
++++ b/Documentation/devicetree/bindings/clock/openipc,nt98513-shared-clock-v1.yaml
+@@ -0,0 +1,27 @@
++# SPDX-License-Identifier: GPL-2.0-only
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/clock/openipc,nt98513-shared-clock-v1.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++title: NT98513 permanent shared clock and resource2 owner
++maintainers:
++  - Daniel Piers <danielpiers@gmail.com>
++description: |
++  Static built-in candidate. Exactly C0020074/4, C0020084/4 and C0090050/12
++  are admitted by the driver. ID 1 exposes sticky Ethernet activation with
++  unknown rate; ID 0 is reserved. No reset pulse or clock disable is defined.
++properties:
++  compatible:
++    const: openipc,nt98513-shared-clock-v1
++  reg:
++    minItems: 3
++    maxItems: 3
++  reg-names:
++    items:
++      - const: gate
++      - const: prepare
++      - const: resource2
++  '#clock-cells':
++    const: 1
++required: [compatible, reg, reg-names, '#clock-cells']
++additionalProperties: false
+--- /dev/null
++++ b/Documentation/devicetree/bindings/watchdog/openipc,nt98513-watchdog-shared-v1.yaml
+@@ -0,0 +1,18 @@
++# SPDX-License-Identifier: GPL-2.0-only
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/watchdog/openipc,nt98513-watchdog-shared-v1.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++title: NT98513 watchdog with permanent shared clock supplier
++maintainers:
++  - Daniel Piers <danielpiers@gmail.com>
++properties:
++  compatible:
++    const: openipc,nt98513-watchdog-shared-v1
++  reg:
++    maxItems: 1
++  openipc,clock-owner:
++    $ref: /schemas/types.yaml#/definitions/phandle
++    description: Single zero-argument reference to the static shared clock owner.
++required: [compatible, reg, 'openipc,clock-owner']
++additionalProperties: false
+--- a/arch/mips/Makefile
++++ b/arch/mips/Makefile
+@@ -1,3 +1,5 @@
++include $(srctree)/arch/mips/nt98513/clock-request-guard.mk
++
+ #
+ # This file is subject to the terms and conditions of the GNU General Public
+ # License.  See the file "COPYING" in the main directory of this archive
+--- a/arch/mips/boot/dts/nt98513/Makefile
++++ b/arch/mips/boot/dts/nt98513/Makefile
+@@ -1,2 +1,7 @@
++include $(srctree)/arch/mips/nt98513/clock-config-guard.mk
++ifeq ($(CONFIG_NT98513_SHARED_CLOCK_BOARD),y)
++dtb-$(CONFIG_MACH_NT98513) += nt98513-shared-clock.dtb
++else
+ dtb-$(CONFIG_MACH_NT98513) += nt98513.dtb
++endif
+ obj-$(CONFIG_BUILTIN_DTB) += $(addsuffix .o, $(dtb-y))
+--- /dev/null
++++ b/arch/mips/boot/dts/nt98513/nt98513-shared-clock.dts
+@@ -0,0 +1,19 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/* Unbooted experimental variant: enabled nodes perform MMIO on probe. */
++#include "nt98513.dts"
++
++/ {
++ clock_owner: clock-controller@c0020074 {
++  compatible = "openipc,nt98513-shared-clock-v1";
++  reg = <0xc0020074 4>, <0xc0020084 4>, <0xc0090050 12>;
++  reg-names = "gate", "prepare", "resource2";
++  #clock-cells = <1>;
++ };
++};
++
++&{/watchdog@c0050000} {
++ compatible = "openipc,nt98513-watchdog-shared-v1";
++ reg = <0xc0050000 16>;
++ /delete-property/ reg-names;
++ openipc,clock-owner = <&clock_owner>;
++};
+--- /dev/null
++++ b/arch/mips/nt98513/Kconfig.shared-clock
+@@ -0,0 +1,16 @@
++# SPDX-License-Identifier: GPL-2.0-only
++config NT98513_SHARED_CLOCK_BOARD
++ bool "Experimental NT98513 board with shared clock ownership"
++ depends on MACH_NT98513 && OF && COMMON_CLK
++ depends on WATCHDOG && WATCHDOG_HANDLE_BOOT_ENABLED && WATCHDOG_NOWAYOUT
++ depends on WATCHDOG_OPEN_TIMEOUT = 0
++ depends on !NT98513_WATCHDOG && !SMP && !SUSPEND && !HIBERNATION && !OF_DYNAMIC
++ default n
++ help
++   Select the alternate complete board DT and both shared drivers together.
++   This unbooted experimental image would perform MMIO during probe.
++   Hardware arbitration and the pre-probe watchdog gap remain unvalidated.
++
++if NT98513_SHARED_CLOCK_BOARD
++source "drivers/clk/nt98513-shared/Kconfig"
++endif
+--- /dev/null
++++ b/arch/mips/nt98513/check-clock-config.sh
+@@ -0,0 +1,36 @@
++#!/bin/sh
++# SPDX-License-Identifier: GPL-2.0-only
++# Check requested values before Kconfig can discard an incompatible board.
++set -eu
++[ "$#" -eq 1 ] || { echo "NT98513: expected configuration path" >&2; exit 1; }
++[ -e "$1" ] || exit 0
++[ -r "$1" ] || { echo "NT98513: unreadable configuration: $1" >&2; exit 1; }
++awk '
++function reject(s) { print "NT98513 shared-clock configuration: " s > "/dev/stderr"; bad=1 }
++BEGIN {
++ split("MACH_NT98513 OF COMMON_CLK WATCHDOG WATCHDOG_HANDLE_BOOT_ENABLED WATCHDOG_NOWAYOUT NT98513_SHARED_CLOCK_BOARD NT98513_SHARED_CLOCK NT98513_WATCHDOG_SHARED", yes, " ")
++ split("NT98513_WATCHDOG SMP SUSPEND HIBERNATION OF_DYNAMIC", no, " ")
++ for (i in yes) relevant[yes[i]]=1
++ for (i in no) relevant[no[i]]=1
++ relevant["WATCHDOG_OPEN_TIMEOUT"]=1
++}
++/^CONFIG_[A-Z0-9_]+=/ {
++ key=$0; sub(/^CONFIG_/, "", key); sub(/=.*/, "", key)
++ val=$0; sub(/^[^=]*=/, "", val)
++ if (key in relevant) { count[key]++; value[key]=val }
++ if (key ~ /^NT98513_(SHARED_CLOCK_BOARD|SHARED_CLOCK|WATCHDOG_SHARED)$/ && val != "n") active=1
++}
++/^# CONFIG_[A-Z0-9_]+ is not set$/ {
++ key=$0; sub(/^# CONFIG_/, "", key); sub(/ is not set$/, "", key)
++ if (key in relevant) { count[key]++; value[key]="n" }
++}
++END {
++ split("NT98513_SHARED_CLOCK_BOARD NT98513_SHARED_CLOCK NT98513_WATCHDOG_SHARED", trio, " ")
++ for (i in trio) if (value[trio[i]] != "" && value[trio[i]] != "n") active=1
++ if (!active) exit 0
++ for (key in count) if (count[key] != 1) reject("duplicate " key)
++ for (i in yes) if (value[yes[i]] != "y") reject(yes[i] " must be y")
++ for (i in no) if (value[no[i]] != "" && value[no[i]] != "n") reject(no[i] " must be n")
++ if (value["WATCHDOG_OPEN_TIMEOUT"] != "0") reject("WATCHDOG_OPEN_TIMEOUT must be 0")
++ exit bad
++}' "$1"
+--- /dev/null
++++ b/arch/mips/nt98513/clock-config-guard.mk
+@@ -0,0 +1,50 @@
++# SPDX-License-Identifier: GPL-2.0-only
++# This runs even when COMMON_CLK=n: drivers/ is unconditional for clk/.
++nt98513-clock-request := $(filter-out n,$(CONFIG_NT98513_SHARED_CLOCK_BOARD) $(CONFIG_NT98513_SHARED_CLOCK) $(CONFIG_NT98513_WATCHDOG_SHARED))
++ifneq ($(strip $(nt98513-clock-request)),)
++ifneq ($(CONFIG_MACH_NT98513),y)
++$(error NT98513 shared-clock configuration requires CONFIG_MACH_NT98513=y)
++endif
++ifneq ($(CONFIG_OF),y)
++$(error NT98513 shared-clock configuration requires CONFIG_OF=y)
++endif
++ifneq ($(CONFIG_COMMON_CLK),y)
++$(error NT98513 shared-clock configuration requires CONFIG_COMMON_CLK=y)
++endif
++ifneq ($(CONFIG_WATCHDOG),y)
++$(error NT98513 shared-clock configuration requires CONFIG_WATCHDOG=y)
++endif
++ifneq ($(CONFIG_WATCHDOG_HANDLE_BOOT_ENABLED),y)
++$(error NT98513 shared-clock configuration requires CONFIG_WATCHDOG_HANDLE_BOOT_ENABLED=y)
++endif
++ifneq ($(CONFIG_WATCHDOG_NOWAYOUT),y)
++$(error NT98513 shared-clock configuration requires CONFIG_WATCHDOG_NOWAYOUT=y)
++endif
++ifneq ($(CONFIG_NT98513_SHARED_CLOCK_BOARD),y)
++$(error NT98513 shared-clock configuration requires CONFIG_NT98513_SHARED_CLOCK_BOARD=y)
++endif
++ifneq ($(CONFIG_NT98513_SHARED_CLOCK),y)
++$(error NT98513 shared-clock configuration requires CONFIG_NT98513_SHARED_CLOCK=y)
++endif
++ifneq ($(CONFIG_NT98513_WATCHDOG_SHARED),y)
++$(error NT98513 shared-clock configuration requires CONFIG_NT98513_WATCHDOG_SHARED=y)
++endif
++ifneq ($(filter-out n,$(CONFIG_NT98513_WATCHDOG)),)
++$(error NT98513 shared-clock configuration requires CONFIG_NT98513_WATCHDOG=n)
++endif
++ifneq ($(filter-out n,$(CONFIG_SMP)),)
++$(error NT98513 shared-clock configuration requires CONFIG_SMP=n)
++endif
++ifneq ($(filter-out n,$(CONFIG_SUSPEND)),)
++$(error NT98513 shared-clock configuration requires CONFIG_SUSPEND=n)
++endif
++ifneq ($(filter-out n,$(CONFIG_HIBERNATION)),)
++$(error NT98513 shared-clock configuration requires CONFIG_HIBERNATION=n)
++endif
++ifneq ($(filter-out n,$(CONFIG_OF_DYNAMIC)),)
++$(error NT98513 shared-clock configuration requires CONFIG_OF_DYNAMIC=n)
++endif
++ifneq ($(CONFIG_WATCHDOG_OPEN_TIMEOUT),0)
++$(error NT98513 shared-clock configuration requires CONFIG_WATCHDOG_OPEN_TIMEOUT=0)
++endif
++endif
+--- /dev/null
++++ b/arch/mips/nt98513/clock-request-guard.mk
+@@ -0,0 +1,12 @@
++# SPDX-License-Identifier: GPL-2.0-only
++# Included before auto.conf regeneration, using KCONFIG_CONFIG in objtree.
++# Linux splits mixed config/build goals before this include is reached.
++ifdef need-config
++nt98513-reset-goals := defconfig %_defconfig allnoconfig allyesconfig allmodconfig alldefconfig randconfig
++ifeq ($(filter $(nt98513-reset-goals),$(MAKECMDGOALS)),)
++nt98513-clock-check := $(shell if $(CONFIG_SHELL) "$(srctree)/arch/mips/nt98513/check-clock-config.sh" "$(KCONFIG_CONFIG)"; then printf PASS; else printf FAIL; fi)
++ifneq ($(nt98513-clock-check),PASS)
++$(error NT98513 rejected the requested shared-clock configuration before normalization)
++endif
++endif
++endif
+--- a/drivers/clk/Kconfig
++++ b/drivers/clk/Kconfig
+@@ -518,3 +518,5 @@
+ 	  Kunit test for the basic clk gate type.
+ 
+ endif
++
++source "arch/mips/nt98513/Kconfig.shared-clock"
+--- a/drivers/clk/Makefile
++++ b/drivers/clk/Makefile
+@@ -1,3 +1,5 @@
++include $(srctree)/arch/mips/nt98513/clock-config-guard.mk
++
+ # SPDX-License-Identifier: GPL-2.0
+ # common clock types
+ obj-$(CONFIG_HAVE_CLK)		+= clk-devres.o clk-bulk.o clkdev.o
+@@ -135,3 +137,5 @@
+ obj-y					+= xilinx/
+ obj-$(CONFIG_ARCH_ZYNQ)			+= zynq/
+ obj-$(CONFIG_COMMON_CLK_ZYNQMP)         += zynqmp/
++
++obj-$(CONFIG_NT98513_SHARED_CLOCK_BOARD) += nt98513-shared/
+--- /dev/null
++++ b/drivers/clk/nt98513-shared/Kconfig
+@@ -0,0 +1,15 @@
++config NT98513_SHARED_CLOCK
++	bool "NT98513 shared sticky clock owner (offline candidate)"
++	depends on MIPS && OF && COMMON_CLK && !OF_DYNAMIC
++	default n
++	help
++	  One permanent owner of CG and CC resource2. No rate is established.
++	  Hardware activation remains unvalidated; do not select in a target image.
++
++config NT98513_WATCHDOG_SHARED
++	bool "NT98513 watchdog using shared clock owner"
++	depends on NT98513_SHARED_CLOCK && WATCHDOG
++	select WATCHDOG_CORE
++	default n
++	help
++	  Migration candidate with permanent nowayout and supplier dependency.
+--- /dev/null
++++ b/drivers/clk/nt98513-shared/Makefile
+@@ -0,0 +1,5 @@
++# SPDX-License-Identifier: GPL-2.0-only
++ccflags-y += -I$(src)/include
++obj-$(CONFIG_NT98513_SHARED_CLOCK) += nt98513-shared-clock.o
++nt98513-shared-clock-y := core/nt98513_clock_txn.o driver/nt98513_clock_owner.o driver/nt98513_eth_clock.o
++obj-$(CONFIG_NT98513_WATCHDOG_SHARED) += driver/nt98513_wdt_shared.o
+--- /dev/null
++++ b/drivers/clk/nt98513-shared/core/nt98513_clock_txn.c
+@@ -0,0 +1,41 @@
++// SPDX-License-Identifier: GPL-2.0-only
++#ifdef __KERNEL__
++#include <linux/errno.h>
++#else
++#include <errno.h>
++#endif
++#include "nt98513_clock_txn.h"
++int nt_cg_activate(struct nt_cg_state *s, const struct nt_cg_io *io, unsigned client)
++{
++ unsigned bit, value;
++ int error = 0, released;
++ if (client > 1) return -EINVAL;
++ if (s->fault) return s->fault;
++ bit = 1u << (client ? 29 : 17);
++ if (io->read(io->context, NT_CG_GRANT) & 4u) {
++  s->fault = -EIO;
++  return s->fault;
++ }
++ io->write(io->context, NT_CG_REQUEST, 4u);
++ error = io->wait_grant(io->context, 1);
++ if (error) {
++  /* No cancellation contract: pending request may affect a remote peer. */
++  s->fault = error;
++  return error;
++ }
++ value = io->read(io->context, NT_CG_PREPARE);
++ if (!(value & bit)) io->write(io->context, NT_CG_PREPARE, value | bit);
++ if (!(io->read(io->context, NT_CG_PREPARE) & bit)) error = -EIO;
++ if (!error) {
++  value = io->read(io->context, NT_CG_GATE);
++  if (!(value & bit)) io->write(io->context, NT_CG_GATE, value | bit);
++  if (!(io->read(io->context, NT_CG_GATE) & bit)) error = -EIO;
++ }
++ /* Only observed acquisition authorizes this source-policy release. */
++ io->write(io->context, NT_CG_RELEASE, 4u);
++ released = io->wait_grant(io->context, 0);
++ if (!error) error = released;
++ if (error) s->fault = error;
++ else s->successful_clients |= 1u << client;
++ return error;
++}
+--- /dev/null
++++ b/drivers/clk/nt98513-shared/driver/nt98513_clock_owner.c
+@@ -0,0 +1,164 @@
++// SPDX-License-Identifier: GPL-2.0-only
++#include <linux/device.h>
++#include <linux/err.h>
++#include <linux/init.h>
++#include <linux/io.h>
++#include <linux/iopoll.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/slab.h>
++#include "nt98513_clock_private.h"
++
++static DEFINE_MUTEX(nt_registry_lock);
++static struct nt98513_clock_owner *nt_singleton;
++static struct device *nt_reservation;
++
++static void __iomem *nt_reg(struct nt98513_clock_owner *o, enum nt_cg_reg r)
++{
++ switch (r) {
++ case NT_CG_GATE: return o->gate;
++ case NT_CG_PREPARE: return o->prepare;
++ case NT_CG_REQUEST: return o->resource2;
++ case NT_CG_RELEASE: return o->resource2 + 4;
++ case NT_CG_GRANT: return o->resource2 + 8;
++ }
++ return NULL; /* Internal enum only. */
++}
++static unsigned nt_read(void *p, enum nt_cg_reg r) { return readl(nt_reg(p, r)); }
++static void nt_write(void *p, enum nt_cg_reg r, unsigned v) { writel(v, nt_reg(p, r)); }
++static int nt_wait(void *p, int set)
++{
++ struct nt98513_clock_owner *o = p;
++ u32 value;
++ /* A polling policy, not a proven wall-clock or hardware completion bound. */
++ return readl_poll_timeout(o->resource2 + 8, value,
++                           !!(value & 4) == !!set, 1, 1000);
++}
++static int nt_snapshot_error(u32 snapshot)
++{
++ unsigned error = (snapshot >> 16) & 0xfff;
++ if (error) return -(int)error;
++ return snapshot & NT_CLOCK_READY ? 0 : -EPROBE_DEFER;
++}
++int nt98513_clock_fault(struct nt98513_clock_owner *o)
++{
++ return nt_snapshot_error(smp_load_acquire(&o->snapshot));
++}
++int nt_clock_enable_snapshot(struct nt98513_clock_owner *o)
++{
++ u32 snapshot = smp_load_acquire(&o->snapshot);
++ int error = nt_snapshot_error(snapshot);
++ if (error) return error;
++ return snapshot & (1U << NT98513_CLOCK_ETHERNET) ? 0 : -EIO;
++}
++int nt98513_clock_prepare_enable(struct nt98513_clock_owner *o,
++                                enum nt98513_clock_client client)
++{
++ struct nt_cg_io io = { o, nt_read, nt_write, nt_wait };
++ int error;
++ bool first_fault = false;
++ might_sleep();
++ if ((unsigned)client > NT98513_CLOCK_ETHERNET) return -EINVAL;
++ mutex_lock(&o->lock);
++ error = nt_snapshot_error(smp_load_acquire(&o->snapshot));
++ if (!error) {
++  error = nt_cg_activate(&o->state, &io, client);
++  first_fault = o->state.fault != 0;
++  smp_store_release(&o->snapshot, NT_CLOCK_READY | o->state.successful_clients |
++                    ((unsigned)-o->state.fault << 16));
++ }
++ mutex_unlock(&o->lock);
++ if (first_fault)
++  dev_err(o->dev, "clock owner permanently faulted: %d; no release/retry after acquisition timeout\n", error);
++ return error;
++}
++static void nt_put_supplier(void *p) { put_device(p); }
++struct nt98513_clock_owner *devm_nt98513_clock_owner_get(struct device *consumer)
++{
++ struct device_node *node;
++ struct nt98513_clock_owner *owner;
++ int error;
++ might_sleep();
++ if (of_property_count_u32_elems(consumer->of_node, "openipc,clock-owner") != 1)
++  return ERR_PTR(-EINVAL);
++ node = of_parse_phandle(consumer->of_node, "openipc,clock-owner", 0);
++ if (!node || !of_device_is_available(node) ||
++     !of_device_is_compatible(node, "openipc,nt98513-shared-clock-v1")) {
++  of_node_put(node);
++  return ERR_PTR(-EINVAL);
++ }
++ mutex_lock(&nt_registry_lock);
++ owner = nt_singleton;
++ error = !owner ? -EPROBE_DEFER : owner->dev->of_node != node ? -EINVAL : 0;
++ if (!error) get_device(owner->dev);
++ mutex_unlock(&nt_registry_lock);
++ of_node_put(node);
++ if (error) return ERR_PTR(error);
++ /* Install the reference action first: the managed link belongs to driver core. */
++ error = devm_add_action_or_reset(consumer, nt_put_supplier, owner->dev);
++ if (error) return ERR_PTR(error);
++ if (!device_link_add(consumer, owner->dev, DL_FLAG_AUTOREMOVE_CONSUMER)) {
++  devm_release_action(consumer, nt_put_supplier, owner->dev);
++  return ERR_PTR(-ENOMEM);
++ }
++ return owner;
++}
++static int nt_owner_probe(struct platform_device *pdev)
++{
++ static const char * const names[] = { "gate", "prepare", "resource2" };
++ static const resource_size_t starts[] = { 0xc0020074, 0xc0020084, 0xc0090050 };
++ static const resource_size_t sizes[] = { 4, 4, 12 };
++ struct resource *resources[3];
++ struct nt98513_clock_owner *o;
++ void __iomem *mapped[3];
++ int error = -EINVAL;
++ unsigned i;
++ mutex_lock(&nt_registry_lock);
++ if (nt_reservation) { mutex_unlock(&nt_registry_lock); return -EBUSY; }
++ nt_reservation = &pdev->dev;
++ mutex_unlock(&nt_registry_lock);
++ if (pdev->num_resources != 3) goto fail;
++ for (i = 0; i < 3; i++) {
++  resources[i] = platform_get_resource_byname(pdev, IORESOURCE_MEM, names[i]);
++  if (!resources[i] || resources[i]->start != starts[i] ||
++      resource_size(resources[i]) != sizes[i]) goto fail;
++ }
++ o = devm_kzalloc(&pdev->dev, sizeof(*o), GFP_KERNEL);
++ if (!o) { error = -ENOMEM; goto fail; }
++ mutex_init(&o->lock);
++ o->dev = &pdev->dev;
++ for (i = 0; i < 3; i++) {
++  mapped[i] = devm_ioremap_resource(&pdev->dev, resources[i]);
++  if (IS_ERR(mapped[i])) { error = PTR_ERR(mapped[i]); goto fail; }
++ }
++ o->gate = mapped[0]; o->prepare = mapped[1]; o->resource2 = mapped[2];
++ platform_set_drvdata(pdev, o);
++ /* Registration may call callbacks: zero snapshot rejects them without I/O. */
++ error = nt_eth_register(o);
++ if (error) goto fail;
++ /* No fallible operation, reset or unwind after provider publication. */
++ mutex_lock(&nt_registry_lock);
++ mutex_lock(&o->lock);
++ smp_store_release(&o->snapshot, NT_CLOCK_READY);
++ nt_singleton = o;
++ mutex_unlock(&o->lock);
++ mutex_unlock(&nt_registry_lock);
++ return 0;
++fail:
++ mutex_lock(&nt_registry_lock);
++ nt_reservation = NULL;
++ mutex_unlock(&nt_registry_lock);
++ return error;
++}
++static const struct of_device_id nt_owner_match[] = {
++ { .compatible = "openipc,nt98513-shared-clock-v1" }, { }
++};
++static struct platform_driver nt_owner_driver = {
++ .probe = nt_owner_probe,
++ .driver = { .name = "nt98513-shared-clock", .of_match_table = nt_owner_match,
++             .suppress_bind_attrs = true },
++};
++static int __init nt_owner_init(void) { return platform_driver_register(&nt_owner_driver); }
++subsys_initcall(nt_owner_init);
++MODULE_LICENSE("GPL");
+--- /dev/null
++++ b/drivers/clk/nt98513-shared/driver/nt98513_eth_clock.c
+@@ -0,0 +1,41 @@
++// SPDX-License-Identifier: GPL-2.0-only
++#include <linux/device.h>
++#include <linux/err.h>
++#include <linux/of_clk.h>
++#include "nt98513_clock_private.h"
++static struct nt98513_clock_owner *nt_from_hw(struct clk_hw *hw)
++{ return container_of(hw, struct nt98513_clock_owner, hw); }
++static int nt_eth_prepare(struct clk_hw *hw)
++{ return nt98513_clock_prepare_enable(nt_from_hw(hw), NT98513_CLOCK_ETHERNET); }
++static int nt_eth_enable(struct clk_hw *hw)
++{ return nt_clock_enable_snapshot(nt_from_hw(hw)); }
++static void nt_eth_noop(struct clk_hw *hw) { (void)hw; }
++static unsigned long nt_eth_rate(struct clk_hw *hw, unsigned long parent)
++{ (void)hw; (void)parent; return 0; }
++static const struct clk_ops nt_eth_ops = {
++ .prepare = nt_eth_prepare, .enable = nt_eth_enable,
++ .disable = nt_eth_noop, .unprepare = nt_eth_noop, .recalc_rate = nt_eth_rate,
++};
++static const struct clk_init_data nt_eth_init = {
++ .name = "nt98513-ethernet-activation", .ops = &nt_eth_ops,
++};
++static struct clk_hw *nt_clock_get_hw(struct of_phandle_args *args, void *data)
++{
++ struct nt98513_clock_owner *o = data;
++ int error;
++ if (args->args_count != 1 || args->args[0] != NT98513_CLOCK_ETHERNET)
++  return ERR_PTR(-EINVAL);
++ error = nt98513_clock_fault(o);
++ if (error) return ERR_PTR(error);
++ return &o->hw;
++}
++int nt_eth_register(struct nt98513_clock_owner *o)
++{
++ int error;
++ o->hw.init = &nt_eth_init;
++ error = clk_hw_register(o->dev, &o->hw);
++ if (error) return error;
++ error = of_clk_add_hw_provider(o->dev->of_node, nt_clock_get_hw, o);
++ if (error) clk_hw_unregister(&o->hw);
++ return error;
++}
+--- /dev/null
++++ b/drivers/clk/nt98513-shared/driver/nt98513_wdt_shared.c
+@@ -0,0 +1,287 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/* Independent NT98513 watchdog, original-byte contract in DAN-229 report. */
++#include <linux/bitops.h>
++#include <linux/err.h>
++#include <linux/io.h>
++#include <linux/iopoll.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/slab.h>
++#include <linux/watchdog.h>
++#include "nt98513_clock_owner.h"
++
++#define NT_CTRL         0x00
++#define NT_STATUS       0x04
++#define NT_FEED         0x08
++#define NT_KEY          0x5a960000U
++#define NT_ENABLE       BIT(0)
++#define NT_MODE         BIT(1)
++#define NT_RUNNING      BIT(30)
++#define NT_RATE         11718U
++#define NT_TICKS        4096U
++#define NT_POLL_US      1000
++#define NT_MAX_TIMEOUT  89U
++#define NT_DEFAULT      80U
++
++struct nt98513_wdt {
++	void __iomem *base;
++	struct nt98513_clock_owner *owner;
++	struct watchdog_device wdd;
++	struct mutex lock;
++	bool fault;
++	bool enabled;
++	unsigned int q;
++};
++
++/* This is a software-derived interval; the clock has not been measured. */
++static unsigned int nt_heartbeat(unsigned int q)
++{
++	return q * NT_TICKS * 1000U / NT_RATE;
++}
++
++static int nt_fault(struct nt98513_wdt *wdt, int error)
++{
++	if (!wdt->fault)
++		dev_err(wdt->wdd.parent,
++			"watchdog transaction failed (%d); hardware state uncertain, feeding latched off\n",
++			error);
++	wdt->fault = true;
++	return error;
++}
++
++static int nt_check(struct nt98513_wdt *wdt)
++{
++	u32 expected = (wdt->q << 8) | NT_MODE | (wdt->enabled ? NT_ENABLE : 0);
++
++	if ((readl(wdt->base + NT_CTRL) & 0xffff) != expected ||
++	    !!(readl(wdt->base + NT_STATUS) & NT_RUNNING) != wdt->enabled)
++		return nt_fault(wdt, -EIO);
++	return 0;
++}
++
++/* A private mutex also covers the inherited-running open path, which can
++ * call ping before taking the core data mutex. No IRQ callbacks use this. */
++static int nt_ping_locked(struct watchdog_device *wdd)
++{
++	struct nt98513_wdt *wdt = watchdog_get_drvdata(wdd);
++	u32 value;
++	int ret;
++
++	if (wdt->fault)
++		return -EIO;
++	if (!wdt->enabled || nt_check(wdt))
++		return nt_fault(wdt, -EIO);
++	ret = readl_poll_timeout(wdt->base + NT_FEED, value,
++				!(value & 1), 1, NT_POLL_US);
++	if (ret)
++		return nt_fault(wdt, ret);
++	/* Preserve non-command bits, as the original ordinary feed does. */
++	writel(value | 1, wdt->base + NT_FEED);
++	/* Flush posted write and bound command consumption, not physical reset. */
++	ret = readl_poll_timeout(wdt->base + NT_FEED, value,
++				!(value & 1), 1, NT_POLL_US);
++	return ret ? nt_fault(wdt, ret) : 0;
++}
++
++static int nt_set_timeout_locked(struct watchdog_device *wdd, unsigned int timeout)
++{
++	struct nt98513_wdt *wdt = watchdog_get_drvdata(wdd);
++	u32 old, value, expected;
++	unsigned int q;
++	int ret;
++
++	/* max_timeout is not enforced by the core with max_hw_heartbeat_ms. */
++	if (!timeout || timeout > NT_MAX_TIMEOUT)
++		return -EINVAL;
++	if (wdt->fault)
++		return -EIO;
++	q = DIV_ROUND_UP(timeout * NT_RATE, NT_TICKS);
++	old = (wdt->q << 8) | NT_MODE | (wdt->enabled ? NT_ENABLE : 0);
++	if (nt_check(wdt))
++		return nt_fault(wdt, -EIO);
++	if (old & NT_ENABLE) {
++		ret = nt_ping_locked(wdd);
++		if (ret)
++			return ret;
++	}
++	expected = (old & 0xff) | (q << 8);
++	writel(NT_KEY | expected, wdt->base + NT_CTRL);
++	value = readl(wdt->base + NT_CTRL);
++	if ((value & 0xffff) != expected ||
++	    !!(readl(wdt->base + NT_STATUS) & NT_RUNNING) != wdt->enabled)
++		return nt_fault(wdt, -EIO);
++	/* Commit only verified hardware configuration. A later feed failure
++	 * returns an error with this new setting retained, never a fake rollback. */
++	wdt->q = q;
++	wdd->timeout = timeout;
++	wdd->max_hw_heartbeat_ms = nt_heartbeat(q);
++	if (old & NT_ENABLE)
++		return nt_ping_locked(wdd);
++	return 0;
++}
++
++static int nt_start_locked(struct watchdog_device *wdd)
++{
++	struct nt98513_wdt *wdt = watchdog_get_drvdata(wdd);
++	u32 value, expected;
++	int ret;
++
++	if (wdt->fault)
++		return -EIO;
++	value = (wdt->q << 8) | NT_MODE | (wdt->enabled ? NT_ENABLE : 0);
++	if (nt_check(wdt) || !wdt->q)
++		return nt_fault(wdt, -EIO);
++	if (wdt->enabled)
++		return nt_ping_locked(wdd);
++	expected = (value & 0xffff) | NT_ENABLE;
++	writel(NT_KEY | expected, wdt->base + NT_CTRL);
++	if ((readl(wdt->base + NT_CTRL) & 0xffff) != expected)
++		return nt_fault(wdt, -EIO);
++	ret = readl_poll_timeout(wdt->base + NT_STATUS, value,
++				value & NT_RUNNING, 1, NT_POLL_US);
++	if (ret)
++		return nt_fault(wdt, ret);
++	wdt->enabled = true;
++	return nt_ping_locked(wdd);
++}
++
++static int nt_ping(struct watchdog_device *wdd)
++{
++	struct nt98513_wdt *wdt = watchdog_get_drvdata(wdd);
++	int ret;
++
++	mutex_lock(&wdt->lock);
++	ret = nt_ping_locked(wdd);
++	mutex_unlock(&wdt->lock);
++	return ret;
++}
++
++static int nt_set_timeout(struct watchdog_device *wdd, unsigned int timeout)
++{
++	struct nt98513_wdt *wdt = watchdog_get_drvdata(wdd);
++	int ret;
++
++	mutex_lock(&wdt->lock);
++	ret = nt_set_timeout_locked(wdd, timeout);
++	mutex_unlock(&wdt->lock);
++	return ret;
++}
++
++static int nt_start(struct watchdog_device *wdd)
++{
++	struct nt98513_wdt *wdt = watchdog_get_drvdata(wdd);
++	int ret;
++
++	mutex_lock(&wdt->lock);
++	ret = nt_start_locked(wdd);
++	mutex_unlock(&wdt->lock);
++	return ret;
++}
++
++static const struct watchdog_info nt_info = {
++	.identity = "NT98513 independent watchdog",
++	.options = WDIOF_KEEPALIVEPING | WDIOF_SETTIMEOUT,
++};
++
++static const struct watchdog_ops nt_ops = {
++	.owner = THIS_MODULE,
++	.start = nt_start,
++	.ping = nt_ping,
++	.set_timeout = nt_set_timeout,
++};
++
++static void __iomem *nt_map(struct platform_device *pdev, unsigned int index,
++			   resource_size_t address, resource_size_t size)
++{
++	struct resource *res = platform_get_resource(pdev, IORESOURCE_MEM, index);
++
++	if (!res || res->start != address || resource_size(res) != size)
++		return ERR_PTR(-EINVAL);
++	return devm_ioremap_resource(&pdev->dev, res);
++}
++
++static int nt_probe(struct platform_device *pdev)
++{
++	struct nt98513_wdt *wdt;
++	struct watchdog_device *wdd;
++	u32 ctrl, status;
++	unsigned int q;
++	int ret;
++
++	if (pdev->num_resources != 1)
++		return -EINVAL;
++	wdt = devm_kzalloc(&pdev->dev, sizeof(*wdt), GFP_KERNEL);
++	if (!wdt)
++		return -ENOMEM;
++	mutex_init(&wdt->lock);
++	wdd = &wdt->wdd;
++	wdd->parent = &pdev->dev;
++	wdd->info = &nt_info;
++	wdd->ops = &nt_ops;
++	wdd->min_timeout = 1;
++	wdd->max_timeout = NT_MAX_TIMEOUT;
++	watchdog_set_drvdata(wdd, wdt);
++	watchdog_set_nowayout(wdd, true);
++	wdt->base = nt_map(pdev, 0, 0xc0050000, 0x10);
++	if (IS_ERR(wdt->base))
++		return PTR_ERR(wdt->base);
++	wdt->owner = devm_nt98513_clock_owner_get(&pdev->dev);
++	if (IS_ERR(wdt->owner))
++		return PTR_ERR(wdt->owner);
++	ret = nt98513_clock_prepare_enable(wdt->owner, NT98513_CLOCK_WATCHDOG);
++	if (ret)
++		return dev_err_probe(&pdev->dev, ret, "watchdog clock preparation failed\n");
++	ctrl = readl(wdt->base + NT_CTRL);
++	status = readl(wdt->base + NT_STATUS);
++	if (!!(ctrl & NT_ENABLE) != !!(status & NT_RUNNING))
++		return dev_err_probe(&pdev->dev, -EIO, "watchdog enable/status disagree\n");
++	if (ctrl & NT_ENABLE) {
++		q = (ctrl >> 8) & 0xff;
++		if ((ctrl & 0xff) != (NT_MODE | NT_ENABLE) || !q)
++			return dev_err_probe(&pdev->dev, -EINVAL, "unsupported inherited watchdog mode\n");
++		/* Keep the inherited interval until an explicit userspace SETTIMEOUT.
++		 * Round up its advertised integer timeout; tell core the shorter
++		 * hardware period so pre-open and active workers account for it. */
++		wdt->q = q;
++		wdt->enabled = true;
++		wdd->timeout = DIV_ROUND_UP(q * NT_TICKS, NT_RATE);
++		wdd->max_hw_heartbeat_ms = nt_heartbeat(q);
++		ret = nt_ping(wdd);
++		if (ret)
++			return ret;
++		set_bit(WDOG_HW_RUNNING, &wdd->status);
++	} else {
++		writel(NT_KEY | NT_MODE, wdt->base + NT_CTRL);
++		if ((readl(wdt->base + NT_CTRL) & 0xffff) != NT_MODE)
++			return nt_fault(wdt, -EIO);
++		ret = nt_set_timeout(wdd, NT_DEFAULT);
++		if (ret)
++			return ret;
++	}
++	ret = devm_watchdog_register_device(&pdev->dev, wdd);
++	if (ret)
++		return dev_err_probe(&pdev->dev, ret,
++			"watchdog registration failed; no continuing kernel keepalive\n");
++	dev_info(&pdev->dev, "watchdog registered: inherited=%d timeout=%us hardware=%ums nowayout=1\n",
++		 watchdog_hw_running(wdd), wdd->timeout, wdd->max_hw_heartbeat_ms);
++	return 0;
++}
++
++static const struct of_device_id nt_match[] = {
++	{ .compatible = "openipc,nt98513-watchdog-shared-v1" },
++	{ }
++};
++
++static struct platform_driver nt_driver = {
++	.probe = nt_probe,
++	.driver = {
++		.name = "nt98513-watchdog-shared",
++		.of_match_table = nt_match,
++		.suppress_bind_attrs = true,
++	},
++};
++builtin_platform_driver(nt_driver);
++MODULE_DESCRIPTION("Independent NT98513 watchdog (offline BSP milestone)");
++MODULE_LICENSE("GPL");
+--- /dev/null
++++ b/drivers/clk/nt98513-shared/include/nt98513_clock_owner.h
+@@ -0,0 +1,10 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef NT98513_CLOCK_OWNER_H
++#define NT98513_CLOCK_OWNER_H
++struct device;
++struct nt98513_clock_owner;
++enum nt98513_clock_client { NT98513_CLOCK_WATCHDOG=0, NT98513_CLOCK_ETHERNET=1 };
++struct nt98513_clock_owner *devm_nt98513_clock_owner_get(struct device *);
++int nt98513_clock_prepare_enable(struct nt98513_clock_owner *, enum nt98513_clock_client);
++int nt98513_clock_fault(struct nt98513_clock_owner *);
++#endif
+--- /dev/null
++++ b/drivers/clk/nt98513-shared/include/nt98513_clock_private.h
+@@ -0,0 +1,20 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef NT98513_CLOCK_PRIVATE_H
++#define NT98513_CLOCK_PRIVATE_H
++#include <linux/clk-provider.h>
++#include <linux/mutex.h>
++#include <linux/types.h>
++#include "nt98513_clock_owner.h"
++#include "nt98513_clock_txn.h"
++#define NT_CLOCK_READY (1U << 2)
++struct nt98513_clock_owner {
++ struct device *dev;
++ void __iomem *gate, *prepare, *resource2;
++ struct mutex lock;
++ struct nt_cg_state state;
++ u32 snapshot;
++ struct clk_hw hw;
++};
++int nt_eth_register(struct nt98513_clock_owner *owner);
++int nt_clock_enable_snapshot(struct nt98513_clock_owner *owner);
++#endif
+--- /dev/null
++++ b/drivers/clk/nt98513-shared/include/nt98513_clock_txn.h
+@@ -0,0 +1,14 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef NT98513_CLOCK_TXN_H
++#define NT98513_CLOCK_TXN_H
++enum nt_cg_reg { NT_CG_GATE, NT_CG_PREPARE, NT_CG_REQUEST, NT_CG_GRANT, NT_CG_RELEASE };
++struct nt_cg_io {
++ void *context;
++ unsigned (*read)(void *, enum nt_cg_reg);
++ void (*write)(void *, enum nt_cg_reg, unsigned);
++ int (*wait_grant)(void *, int want_set);
++};
++/* Caller exclusively serializes state and the entire transaction. */
++struct nt_cg_state { int fault; unsigned successful_clients; };
++int nt_cg_activate(struct nt_cg_state *, const struct nt_cg_io *, unsigned client);
++#endif
