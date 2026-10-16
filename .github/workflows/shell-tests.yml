@@ -3,6 +3,7 @@ on:
   pull_request:
     branches:
       - master
+      - codex/nt98513-ram-console
   # Deliberately no push trigger. Every commit that reaches master was already
   # parsed and tested by these same jobs on its pull request, so re-running them
   # on the merge commit only re-proves what was just proven.
