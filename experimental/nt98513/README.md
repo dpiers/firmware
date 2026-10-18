@@ -178,3 +178,10 @@ candidate to the shared board. Its Ethernet node remains disabled; activation
 requires independently established board wiring and exclusive ownership.
 See [ETHERNET.md](ETHERNET.md) for the firmware evidence, build commands,
 offline validation and unresolved hardware contracts.
+
+## Combined Ethernet and owned-input consumer
+
+The separate `nt98513-ethernet-owned-input` target combines the existing disabled
+Ethernet board with the pinned manual Divinus consumer. See
+[ETHERNET-OWNED-INPUT.md](ETHERNET-OWNED-INPUT.md) for isolated-output reproduction
+and the remaining capture and hardware prerequisites.

@@ -37,7 +37,7 @@ class OwnedTargets(unittest.TestCase):
         self.log = self.br / 'calls.txt'
         (self.br / 'Makefile').write_text('''%:
 	@printf '%s\\n' '$@' '$(O)' '$(BR2_EXTERNAL)' '$(NT98513_DIVINUS_SOURCE_DIR)' >> calls.txt
-	@case '$@' in *defconfig) mkdir -p '$(O)'; printf '%s\\n' 'BR2_PACKAGE_DIVINUS_OWNED_NT98513=y' > '$(O)/.config';; esac
+	@case '$@' in *defconfig) mkdir -p '$(O)'; cp '$(BR2_EXTERNAL)/configs/$@' '$(O)/.config';; esac
 ''')
 
     def make(self, target, omit=(), **changes):

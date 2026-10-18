@@ -74,23 +74,62 @@ def check_archive(path, m):
         raise ValueError('prepared archive hash mismatch; existing data preserved')
 
 
-def verify(output_dir, build_output=None):
+def check_build_output(build_output, variant):
+    """Identify the selected consumer variant before Buildroot can rewrite it."""
+    fragments = {
+        'owned-input': 'owned-input-network.config',
+        'ethernet-owned-input': 'shared-clock.config $(BR2_EXTERNAL_NT98513_PATH)/board/ethernet.config',
+    }
+    if variant not in fragments:
+        raise ValueError('unknown build variant')
+    out = safe_path(build_output)
+    if not out.exists():
+        return
+    if not out.is_dir():
+        raise ValueError('build output is not a directory')
+    config = safe_path(out / '.config')
+    if not config.exists():
+        if any(out.iterdir()):
+            raise ValueError('build output must be empty or already ' + variant + ' configured')
+        return
+    if not config.is_file():
+        raise ValueError('build configuration is not a regular file')
+    values = {}
+    for line in config.read_text().splitlines():
+        disabled = re.fullmatch(r'# (BR2_[A-Za-z0-9_]+) is not set', line)
+        if disabled:
+            key, value = disabled[1], 'n'
+        elif not line or line.startswith('#'):
+            continue
+        else:
+            entry = re.fullmatch(r'(BR2_[A-Za-z0-9_]+)=("(?:[^"\\]|\\.)*"|y|n|m|[0-9]+|0[xX][0-9a-fA-F]+)', line)
+            if not entry:
+                raise ValueError('malformed build configuration entry')
+            key, value = entry.groups()
+        if key in values:
+            raise ValueError('duplicate build configuration key: ' + key)
+        values[key] = value.replace('$(BR2_EXTERNAL_NT98513_PATH)', str(TREE))
+    expected = {
+        'BR2_LINUX_KERNEL': 'y',
+        'BR2_STATIC_LIBS': 'y',
+        'BR2_PACKAGE_DIVINUS_OWNED_NT98513': 'y',
+        'BR2_LINUX_KERNEL_CUSTOM_CONFIG_FILE': '"' + str(TREE / 'board/linux.config') + '"',
+        'BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES': '"$(BR2_EXTERNAL_NT98513_PATH)/board/' + fragments[variant] + '"',
+        'BR2_PACKAGE_BUSYBOX_CONFIG_FRAGMENT_FILES': '"' + str(TREE / 'board/owned-input-network-busybox.config') + '"',
+    }
+    expected = {key: value.replace('$(BR2_EXTERNAL_NT98513_PATH)', str(TREE))
+                for key, value in expected.items()}
+    if any(values.get(key) != value for key, value in expected.items()):
+        raise ValueError('refusing a different variant or unrelated output; expected ' + variant)
+
+
+def verify(output_dir, build_output=None, build_variant='owned-input'):
     m = load_manifest(); validate_manifest(m)
     directory = safe_path(output_dir)
     archive = directory / m['archive']
     check_archive(archive, m)
     if build_output is not None:
-        out = safe_path(build_output)
-        if out.exists():
-            if not out.is_dir():
-                raise ValueError('build output is not a directory')
-            config = out / '.config'
-            safe_path(config)
-            if config.exists():
-                if not config.is_file() or 'BR2_PACKAGE_DIVINUS_OWNED_NT98513=y' not in config.read_text().splitlines():
-                    raise ValueError('refusing to reconfigure a console or unrelated output')
-            elif any(out.iterdir()):
-                raise ValueError('build output must be empty or already owned-input configured')
+        check_build_output(build_output, build_variant)
     return archive
 
 
@@ -151,14 +190,15 @@ def main():
     parser.add_argument('--output-dir', type=Path, required=True)
     parser.add_argument('--verify-archive', action='store_true')
     parser.add_argument('--build-output', type=Path)
+    parser.add_argument('--build-variant', choices=('owned-input', 'ethernet-owned-input'), default='owned-input')
     args = parser.parse_args()
     try:
         if args.verify_archive:
             if args.checkout:
                 raise ValueError('--checkout is not used by verification')
-            archive = verify(args.output_dir, args.build_output)
+            archive = verify(args.output_dir, args.build_output, args.build_variant)
         else:
-            if not args.checkout or args.build_output:
+            if not args.checkout or args.build_output or args.build_variant != 'owned-input':
                 raise ValueError('preparation needs --checkout; --build-output is verification-only')
             archive = prepare(args.checkout, args.output_dir)
         print(json.dumps({'archive': str(archive), 'sha256': digest(archive.read_bytes())}))
