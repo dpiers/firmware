@@ -16,3 +16,12 @@ endef
 LINUX_POST_CONFIGURE_HOOKS += NT98513_CHECK_ETHERNET_KERNEL
 LINUX_PRE_BUILD_HOOKS += NT98513_CHECK_ETHERNET_KERNEL
 endif
+
+# USB remains disabled in DT; require the selected host implementation to build.
+ifneq ($(filter %/usb-host.config,$(call qstrip,$(BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES))),)
+define NT98513_CHECK_USB_HOST_KERNEL
+	sh "$(BR2_EXTERNAL_NT98513_PATH)/tools/check_usb_host_kernel.sh" "$(@D)"
+endef
+LINUX_POST_CONFIGURE_HOOKS += NT98513_CHECK_USB_HOST_KERNEL
+LINUX_PRE_BUILD_HOOKS += NT98513_CHECK_USB_HOST_KERNEL
+endif

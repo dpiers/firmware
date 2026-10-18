@@ -77,6 +77,7 @@ def check_archive(path, m):
 def check_build_output(build_output, variant):
     """Identify the selected consumer variant before Buildroot can rewrite it."""
     fragments = {
+        'usb-host': 'shared-clock.config $(BR2_EXTERNAL_NT98513_PATH)/board/ethernet.config $(BR2_EXTERNAL_NT98513_PATH)/board/usb-host.config',
         'owned-input': 'owned-input-network.config',
         'ethernet-owned-input': 'shared-clock.config $(BR2_EXTERNAL_NT98513_PATH)/board/ethernet.config',
     }
@@ -190,7 +191,7 @@ def main():
     parser.add_argument('--output-dir', type=Path, required=True)
     parser.add_argument('--verify-archive', action='store_true')
     parser.add_argument('--build-output', type=Path)
-    parser.add_argument('--build-variant', choices=('owned-input', 'ethernet-owned-input'), default='owned-input')
+    parser.add_argument('--build-variant', choices=('owned-input', 'ethernet-owned-input', 'usb-host'), default='owned-input')
     args = parser.parse_args()
     try:
         if args.verify_archive:

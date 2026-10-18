@@ -185,3 +185,10 @@ The separate `nt98513-ethernet-owned-input` target combines the existing disable
 Ethernet board with the pinned manual Divinus consumer. See
 [ETHERNET-OWNED-INPUT.md](ETHERNET-OWNED-INPUT.md) for isolated-output reproduction
 and the remaining capture and hardware prerequisites.
+
+## Optional inherited USB host candidate
+
+[USB-HOST.md](USB-HOST.md) documents the isolated `nt98513-usb-host` build,
+default-disabled USB/Ethernet nodes, inherited-state admission and severe
+fail-stop policy. The combined image retains the same manual Divinus consumer.
+It provides no Wi-Fi driver and makes no hardware execution claim.

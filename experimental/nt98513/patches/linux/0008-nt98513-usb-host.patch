@@ -1,0 +1,1102 @@
+--- /dev/null
++++ b/Documentation/devicetree/bindings/usb/openipc,nt98513-usb-host.yaml
+@@ -0,0 +1,71 @@
++# SPDX-License-Identifier: GPL-2.0-only OR BSD-2-Clause
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/usb/openipc,nt98513-usb-host.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++
++title: Experimental NT98513 stock-initialized USB host
++
++maintainers:
++  - OpenIPC Developers <dev@openipc.org>
++
++description: |
++  A permanent host-only experimental FOTG-derived candidate, not a cold-start
++  driver. Runtime capability checks admit a conservative single-port subset.
++  The two USB mappings are separate. C0020010 is additionally observed through
++  a minimal read-only shared mapping; the driver never writes the clock mux.
++  Deployment assertions must come from an independently established handoff.
++  They cannot prove RTOS/loader quiescence, PHY readiness, VBUS or clock state.
++  A bounded halt failure after Linux DMA publication causes a kernel panic to
++  prevent USB core or clients from reclaiming buffers still visible to DMA.
++
++properties:
++  compatible:
++    const: openipc,nt98513-usb-host-v1
++  reg:
++    items:
++      - description: Controller C0600000, 0x400 bytes
++      - description: PHY C0601000, 0x200 bytes
++  reg-names:
++    items:
++      - const: host
++      - const: phy
++  interrupts:
++    maxItems: 1
++  interrupt-names:
++    const: host
++  dr_mode:
++    const: host
++  openipc,linux-exclusive-ownership:
++    type: boolean
++    description: |
++      Loader and RTOS USB/PHY/IRQ/DMA writers and the registered RTOS callback
++      are quiesced and excluded for the complete Linux driver lifetime.
++  openipc,stock-initialized-host-handoff:
++    type: boolean
++    description: |
++      Stock initialization completed, with qualified PHY trim, role, pads,
++      VBUS/power and IRQ27 routing. The driver preserves inherited PHY14/18
++      fields across its bounded controller reset and reestablishes the selected
++      Linux wrapper sequence. This assertion does not prove physical readiness.
++  openipc,stable-usb-clock:
++    type: boolean
++    description: |
++      Clock gates, rates and APB mux are stable throughout the Linux lifetime,
++      after Linux clock setup. A fresh C0020010 field selects USB304 bits1:0.
++      Register snapshots do not synchronize or exclude a concurrent writer.
++  status: true
++
++required: [compatible, reg, reg-names, interrupts, interrupt-names, dr_mode]
++allOf:
++  - if:
++      properties:
++        status:
++          const: disabled
++      required: [status]
++    else:
++      required:
++        - openipc,linux-exclusive-ownership
++        - openipc,stock-initialized-host-handoff
++        - openipc,stable-usb-clock
++additionalProperties: false
+--- a/arch/mips/boot/dts/nt98513/Makefile
++++ b/arch/mips/boot/dts/nt98513/Makefile
+@@ -1,5 +1,7 @@
+ include $(srctree)/arch/mips/nt98513/clock-config-guard.mk
+-ifeq ($(CONFIG_NT98513_ETHERNET_BOARD),y)
++ifeq ($(CONFIG_NT98513_USB_HOST_BOARD),y)
++dtb-$(CONFIG_MACH_NT98513) += nt98513-usb-host.dtb
++else ifeq ($(CONFIG_NT98513_ETHERNET_BOARD),y)
+ dtb-$(CONFIG_MACH_NT98513) += nt98513-ethernet.dtb
+ else ifeq ($(CONFIG_NT98513_SHARED_CLOCK_BOARD),y)
+ dtb-$(CONFIG_MACH_NT98513) += nt98513-shared-clock.dtb
+--- /dev/null
++++ b/arch/mips/boot/dts/nt98513/nt98513-usb-host.dts
+@@ -0,0 +1,16 @@
++// SPDX-License-Identifier: GPL-2.0-only
++#include "nt98513-ethernet.dts"
++
++/ {
++	usb_host: usb@c0600000 {
++		compatible = "openipc,nt98513-usb-host-v1";
++		reg = <0xc0600000 0x400>, <0xc0601000 0x200>;
++		reg-names = "host", "phy";
++		interrupt-parent = <&intc>;
++		interrupts = <27>;
++		interrupt-names = "host";
++		dr_mode = "host";
++		/* No inherited-state, stable-clock or ownership assertions are supplied. */
++		status = "disabled";
++	};
++};
+--- a/arch/mips/nt98513/Kconfig.shared-clock
++++ b/arch/mips/nt98513/Kconfig.shared-clock
+@@ -28,3 +28,12 @@
+    Embed the alternate board with a disabled NT98513 Ethernet node.
+    Activation requires explicit Linux-exclusive ownership and MII/RMII
+    board wiring. No hardware link, DMA lifecycle or IRQ contract is proved.
++
++config NT98513_USB_HOST_BOARD
++ bool "Experimental NT98513 board with disabled USB host candidate"
++ depends on NT98513_ETHERNET_BOARD && USB_FOTG210_NT98513
++ default n
++ help
++   Add a disabled inherited-state USB host node alongside disabled Ethernet.
++   Control/bulk only. A failed halt after DMA publication panics before any
++   DMA-buffer reclamation. No physical USB or Wi-Fi acceptance is implied.
+--- a/drivers/usb/fotg210/Kconfig
++++ b/drivers/usb/fotg210/Kconfig
+@@ -4,7 +4,7 @@
+ 	tristate "Faraday FOTG210 USB2 Dual Role controller"
+ 	depends on USB || USB_GADGET
+ 	depends on HAS_DMA && HAS_IOMEM
+-	depends on ARCH_GEMINI || COMPILE_TEST
++	depends on ARCH_GEMINI || COMPILE_TEST || MACH_NT98513
+ 	default ARCH_GEMINI
+ 	select MFD_SYSCON
+ 	help
+@@ -36,3 +36,16 @@
+ 	   dynamically linked module called "fotg210-udc".
+ 
+ endif
++
++config USB_FOTG210_NT98513
++ bool "Experimental NT98513 inherited USB host"
++ depends on MACH_NT98513 && USB=y && USB_FOTG210=y && USB_FOTG210_HCD
++ depends on !USB_FOTG210_UDC && !USB_OTG && !USB_ROLE_SWITCH
++ depends on !PM && !OF_DYNAMIC
++ default n
++ help
++   Builtin permanent NT-specific host using the FOTG transfer engine.
++   Requires externally qualified stock host initialization, stable clocks,
++   PHY/VBUS state and exclusive Linux ownership. Control/bulk only.
++   After DMA publication a failed bounded halt panics to prevent unsafe
++   DMA-buffer reclamation. The supplied board node remains disabled.
+--- a/drivers/usb/fotg210/Makefile
++++ b/drivers/usb/fotg210/Makefile
+@@ -8,3 +8,5 @@
+ fotg210-objs-$(CONFIG_USB_FOTG210_UDC)	+= fotg210-udc.o
+ fotg210-objs				:= $(fotg210-objs-y)
+ obj-$(CONFIG_USB_FOTG210)		+= fotg210.o
++
++obj-$(CONFIG_USB_FOTG210_NT98513) += fotg210-nt98513.o
+--- a/drivers/usb/fotg210/fotg210-hcd.c
++++ b/drivers/usb/fotg210/fotg210-hcd.c
+@@ -87,6 +87,66 @@
+ #define fotg210_warn(fotg210, fmt, args...) \
+ 	dev_warn(fotg210_to_hcd(fotg210)->self.controller, fmt, ## args)
+ 
++/*
++ * NT-only lifetime rule: proof of HALT precedes fatal notification/free.
++ * Merely retaining our pools would not retain USB-core/client URB buffers.
++ * Call with the HCD lock held once IRQs/timers can run.
++ */
++static int nt98513_require_halt(struct fotg210_hcd *fotg210)
++{
++	struct nt98513_usb *nt = fotg210->fotg->nt;
++	enum nt_usb_result result;
++
++	if (!nt)
++		return 0;
++	result = nt_usb_halt(&nt->io);
++	if (result && nt->state.published)
++		panic("NT98513 USB: DMA halt failed; refusing buffer reclamation");
++	if (result)
++		return -EIO;
++	fotg210->command &= ~(CMD_RUN | CMD_ASE | CMD_PSE | CMD_IAAD);
++	fotg210->rh_state = FOTG210_RH_HALTED;
++	return 0;
++}
++
++/*
++ * usb_hc_died queues work which dereferences root_hub even before registration.
++ * Keep that work out of usb_add_hcd's failure unwind. Called with HCD lock held.
++ */
++static void nt98513_notify_death(struct fotg210_hcd *fotg210)
++{
++	struct nt98513_usb *nt = fotg210->fotg->nt;
++
++	if (nt->core_ready && !nt->death_notified) {
++		nt->death_notified = true;
++		usb_hc_died(fotg210_to_hcd(fotg210));
++	}
++}
++
++static bool nt98513_check_live(struct fotg210_hcd *fotg210)
++{
++	struct nt98513_usb *nt = fotg210->fotg->nt;
++	u32 status;
++
++	if (!nt || !nt->state.published)
++		return true;
++	if (fotg210->shutdown)
++		return false;
++	status = nt_usb_read(&nt->io, 0, 0x14);
++	if (nt_usb_live(&nt->io, &nt->state) && status != ~0u && !(status & STS_FATAL))
++		return true;
++	nt98513_require_halt(fotg210);
++	fotg210->shutdown = true;
++	fotg210->enabled_hrtimer_events = 0;
++	nt98513_notify_death(fotg210);
++	return false;
++}
++
++static u32 fotg210_port_rwc(struct fotg210_hcd *fotg210)
++{
++	return fotg210->fotg->nt ? 0x2a : PORT_RWC_BITS;
++}
++
+ /* check the values in the HCSPARAMS register (host controller _Structural_
+  * parameters) see EHCI spec, Table 2-4 for each value
+  */
+@@ -1163,6 +1223,11 @@
+ /* Poll the STS_HALT status bit; see when a dead controller stops */
+ static void fotg210_handle_controller_death(struct fotg210_hcd *fotg210)
+ {
++	if (fotg210->fotg->nt) {
++		if (!fotg210->fotg->nt->state.allocated)
++			return;
++		nt98513_require_halt(fotg210);
++	}
+ 	if (!(fotg210_readl(fotg210, &fotg210->regs->status) & STS_HALT)) {
+ 
+ 		/* Give up after a few milliseconds */
+@@ -1342,6 +1407,11 @@
+ 
+ 	spin_lock_irqsave(&fotg210->lock, flags);
+ 
++	if (!nt98513_check_live(fotg210)) {
++		fotg210_handle_controller_death(fotg210);
++		spin_unlock_irqrestore(&fotg210->lock, flags);
++		return HRTIMER_NORESTART;
++	}
+ 	events = fotg210->enabled_hrtimer_events;
+ 	fotg210->enabled_hrtimer_events = 0;
+ 	fotg210->next_hrtimer_event = FOTG210_HRTIMER_NO_EVENT;
+@@ -1448,8 +1518,14 @@
+ 	memset(&desc->u.hs.DeviceRemovable[0], 0, temp);
+ 	memset(&desc->u.hs.DeviceRemovable[temp], 0xff, temp);
+ 
+-	temp = HUB_CHAR_INDV_PORT_OCPM;	/* per-port overcurrent reporting */
+-	temp |= HUB_CHAR_NO_LPSM;	/* no power switching */
++	if (fotg210->fotg->nt) {
++		/* Stock default ignore-OC policy; no electrical OC claim. */
++		temp = HUB_CHAR_NO_OCPM;
++		temp |= (fotg210->hcs_params & BIT(4)) ? HUB_CHAR_INDV_PORT_LPSM : HUB_CHAR_NO_LPSM;
++	} else {
++		temp = HUB_CHAR_INDV_PORT_OCPM;
++		temp |= HUB_CHAR_NO_LPSM;
++	}
+ 	desc->wHubCharacteristics = cpu_to_le16(temp);
+ }
+ 
+@@ -1472,6 +1548,18 @@
+ 	 */
+ 
+ 	spin_lock_irqsave(&fotg210->lock, flags);
++	if (!nt98513_check_live(fotg210)) {
++		fotg210_handle_controller_death(fotg210);
++		retval = -ESHUTDOWN;
++		goto out;
++	}
++	if (fotg210->fotg->nt &&
++	    ((typeReq == SetPortFeature &&
++	      (wValue == USB_PORT_FEAT_TEST || wValue == USB_PORT_FEAT_SUSPEND)) ||
++	     (typeReq == ClearPortFeature && wValue == USB_PORT_FEAT_SUSPEND))) {
++		retval = -EPIPE;
++		goto out;
++	}
+ 	switch (typeReq) {
+ 	case ClearHubFeature:
+ 		switch (wValue) {
+@@ -1488,7 +1576,7 @@
+ 			goto error;
+ 		wIndex--;
+ 		temp = fotg210_readl(fotg210, status_reg);
+-		temp &= ~PORT_RWC_BITS;
++		temp &= ~fotg210_port_rwc(fotg210);
+ 
+ 		/*
+ 		 * Even if OWNER is set, so the port is owned by the
+@@ -1524,8 +1612,16 @@
+ 			fotg210_writel(fotg210, temp | PORT_CSC, status_reg);
+ 			break;
+ 		case USB_PORT_FEAT_C_OVER_CURRENT:
+-			fotg210_writel(fotg210, temp | OTGISR_OVC,
++			if (!fotg210->fotg->nt)
++				fotg210_writel(fotg210, temp | OTGISR_OVC,
+ 					&fotg210->regs->otgisr);
++			break;
++		case USB_PORT_FEAT_POWER:
++			if (!fotg210->fotg->nt)
++				goto error;
++			if (fotg210->hcs_params & BIT(4))
++				fotg210_writel(fotg210, nt_usb_port_value(temp, 0, BIT(12)),
++						status_reg);
+ 			break;
+ 		case USB_PORT_FEAT_C_RESET:
+ 			/* GetPortStatus clears reset */
+@@ -1557,7 +1653,7 @@
+ 		if (temp & PORT_PEC)
+ 			status |= USB_PORT_STAT_C_ENABLE << 16;
+ 
+-		temp1 = fotg210_readl(fotg210, &fotg210->regs->otgisr);
++		temp1 = fotg210->fotg->nt ? 0 : fotg210_readl(fotg210, &fotg210->regs->otgisr);
+ 		if (temp1 & OTGISR_OVC)
+ 			status |= USB_PORT_STAT_C_OVERCURRENT << 16;
+ 
+@@ -1584,7 +1680,7 @@
+ 				/* stop resume signaling */
+ 				temp = fotg210_readl(fotg210, status_reg);
+ 				fotg210_writel(fotg210, temp &
+-						~(PORT_RWC_BITS | PORT_RESUME),
++						~(fotg210_port_rwc(fotg210) | PORT_RESUME),
+ 						status_reg);
+ 				clear_bit(wIndex, &fotg210->resuming_ports);
+ 				retval = handshake(fotg210, status_reg,
+@@ -1608,7 +1704,7 @@
+ 
+ 			/* force reset to complete */
+ 			fotg210_writel(fotg210,
+-					temp & ~(PORT_RWC_BITS | PORT_RESET),
++					temp & ~(fotg210_port_rwc(fotg210) | PORT_RESET),
+ 					status_reg);
+ 			/* REVISIT:  some hardware needs 550+ usec to clear
+ 			 * this bit; seems too long to spin routinely...
+@@ -1625,6 +1721,12 @@
+ 			temp = check_reset_complete(fotg210, wIndex, status_reg,
+ 					fotg210_readl(fotg210, status_reg));
+ 
++			/* The port reset must not silently invalidate the inherited contract. */
++			if (!nt98513_check_live(fotg210)) {
++				fotg210_handle_controller_death(fotg210);
++				retval = -ESHUTDOWN;
++				goto out;
++			}
+ 			/* restart schedule */
+ 			fotg210->command |= CMD_RUN;
+ 			fotg210_writel(fotg210, fotg210->command, &fotg210->regs->command);
+@@ -1638,7 +1740,7 @@
+ 		/* transfer dedicated ports to the companion hc */
+ 		if ((temp & PORT_CONNECT) &&
+ 				test_bit(wIndex, &fotg210->companion_ports)) {
+-			temp &= ~PORT_RWC_BITS;
++			temp &= ~fotg210_port_rwc(fotg210);
+ 			fotg210_writel(fotg210, temp, status_reg);
+ 			fotg210_dbg(fotg210, "port %d --> companion\n",
+ 					wIndex + 1);
+@@ -1669,9 +1771,11 @@
+ 				set_bit(wIndex, &fotg210->port_c_suspend);
+ 		}
+ 
+-		temp1 = fotg210_readl(fotg210, &fotg210->regs->otgisr);
++		temp1 = fotg210->fotg->nt ? 0 : fotg210_readl(fotg210, &fotg210->regs->otgisr);
+ 		if (temp1 & OTGISR_OVC)
+ 			status |= USB_PORT_STAT_OVERCURRENT;
++		if (fotg210->fotg->nt && (temp & BIT(12)))
++			status |= USB_PORT_STAT_POWER;
+ 		if (temp & PORT_RESET)
+ 			status |= USB_PORT_STAT_RESET;
+ 		if (test_bit(wIndex, &fotg210->port_c_suspend))
+@@ -1699,7 +1803,7 @@
+ 			goto error;
+ 		wIndex--;
+ 		temp = fotg210_readl(fotg210, status_reg);
+-		temp &= ~PORT_RWC_BITS;
++		temp &= ~fotg210_port_rwc(fotg210);
+ 		switch (wValue) {
+ 		case USB_PORT_FEAT_SUSPEND:
+ 			if ((temp & PORT_PE) == 0
+@@ -1740,6 +1844,13 @@
+ 		 * or else system reboot).  See EHCI 2.3.9 and 4.14 for info
+ 		 * about the EHCI-specific stuff.
+ 		 */
++		case USB_PORT_FEAT_POWER:
++			if (!fotg210->fotg->nt)
++				goto error;
++			if (fotg210->hcs_params & BIT(4))
++				fotg210_writel(fotg210, nt_usb_port_value(temp, BIT(12), 0),
++						status_reg);
++			break;
+ 		case USB_PORT_FEAT_TEST:
+ 			if (!selector || selector > 5)
+ 				goto error;
+@@ -1749,7 +1860,7 @@
+ 
+ 			/* Put all enabled ports into suspend */
+ 			temp = fotg210_readl(fotg210, status_reg) &
+-				~PORT_RWC_BITS;
++				~fotg210_port_rwc(fotg210);
+ 			if (temp & PORT_PE)
+ 				fotg210_writel(fotg210, temp | PORT_SUSPEND,
+ 						status_reg);
+@@ -1774,6 +1885,7 @@
+ 		/* "stall" on error */
+ 		retval = -EPIPE;
+ 	}
++out:
+ 	spin_unlock_irqrestore(&fotg210->lock, flags);
+ 	return retval;
+ }
+@@ -4782,7 +4894,7 @@
+ {
+ 	u32 __iomem *status_reg = &fotg210->regs->port_status;
+ 
+-	fotg210_writel(fotg210, PORT_RWC_BITS, status_reg);
++	fotg210_writel(fotg210, fotg210_port_rwc(fotg210), status_reg);
+ }
+ 
+ /* Halt HC, turn off all ports, and let the BIOS use the companion controllers.
+@@ -4805,6 +4917,19 @@
+ static void fotg210_shutdown(struct usb_hcd *hcd)
+ {
+ 	struct fotg210_hcd *fotg210 = hcd_to_fotg210(hcd);
++
++	if (fotg210->fotg->nt) {
++		spin_lock_irq(&fotg210->lock);
++		nt98513_require_halt(fotg210);
++		fotg210->shutdown = true;
++		fotg210->fotg->nt->core_ready = false;
++		fotg210->enabled_hrtimer_events = 0;
++		spin_unlock_irq(&fotg210->lock);
++		synchronize_irq(hcd->irq);
++		hrtimer_cancel(&fotg210->hrtimer);
++		cancel_work_sync(&hcd->died_work);
++		return;
++	}
+ 
+ 	spin_lock_irq(&fotg210->lock);
+ 	fotg210->shutdown = true;
+@@ -4851,11 +4976,46 @@
+ 	turn_on_io_watchdog(fotg210);
+ }
+ 
++static void nt98513_hcd_stop(struct usb_hcd *hcd)
++{
++	struct fotg210_hcd *fotg210 = hcd_to_fotg210(hcd);
++	struct nt98513_usb *nt = fotg210->fotg->nt;
++	bool owned;
++
++	if (!nt->state.allocated)
++		return;
++	spin_lock_irq(&fotg210->lock);
++	nt98513_require_halt(fotg210);
++	fotg210->shutdown = true;
++	nt->core_ready = false;
++	fotg210->enabled_hrtimer_events = 0;
++	owned = nt_usb_release(&nt->state, 1);
++	spin_unlock_irq(&fotg210->lock);
++	/*
++	 * .stop may run before the core releases its registered IRQ. Once the allocation claim is
++	 * cleared, pending IRQ/timer paths cannot scan pools.
++	 */
++	if (hcd->irq > 0)
++		synchronize_irq(hcd->irq);
++	hrtimer_cancel(&fotg210->hrtimer);
++	cancel_work_sync(&hcd->died_work);
++	remove_sysfs_files(fotg210);
++	remove_debug_files(fotg210);
++	if (owned)
++		fotg210_mem_cleanup(fotg210);
++}
++
+ /* Called when the fotg210_hcd module is removed.
+  */
+ static void fotg210_stop(struct usb_hcd *hcd)
+ {
+ 	struct fotg210_hcd *fotg210 = hcd_to_fotg210(hcd);
++	struct nt98513_usb *nt = fotg210->fotg->nt;
++
++	if (nt) {
++		nt98513_hcd_stop(hcd);
++		return;
++	}
+ 
+ 	fotg210_dbg(fotg210, "stop\n");
+ 
+@@ -5004,6 +5164,13 @@
+ 	struct fotg210_hcd *fotg210 = hcd_to_fotg210(hcd);
+ 	u32 temp;
+ 
++	if (fotg210->fotg->nt) {
++		if (!nt_usb_live(&fotg210->fotg->nt->io,
++				 &fotg210->fotg->nt->state))
++			return -EIO;
++		/* Publication precedes even the first schedule-pointer write. */
++		fotg210->fotg->nt->state.published = 1;
++	}
+ 	hcd->uses_new_polling = 1;
+ 
+ 	/* EHCI spec section 4.1 */
+@@ -5068,6 +5235,17 @@
+ 	fotg210_writel(fotg210, INTR_MASK,
+ 			&fotg210->regs->intr_enable); /* Turn On Interrupts */
+ 
++	if (fotg210->fotg->nt &&
++	    (nt_usb_wait(&fotg210->fotg->nt->io, 0x14, STS_HALT, 0, 2000) ||
++	     nt_usb_read(&fotg210->fotg->nt->io, 0, 0x18) != INTR_MASK)) {
++		unsigned long flags;
++
++		spin_lock_irqsave(&fotg210->lock, flags);
++		nt98513_require_halt(fotg210);
++		spin_unlock_irqrestore(&fotg210->lock, flags);
++		return -EIO;
++	}
++
+ 	/* GRR this is run-once init(), being done every time the HC starts.
+ 	 * So long as they're part of class devices, we can't do it init()
+ 	 * since the class device isn't created that early.
+@@ -5116,7 +5294,16 @@
+ 	int bh;
+ 
+ 	spin_lock(&fotg210->lock);
+-
++	if (fotg210->fotg->nt && !fotg210->fotg->nt->state.allocated) {
++		spin_unlock(&fotg210->lock);
++		return IRQ_NONE;
++	}
++
++	if (!nt98513_check_live(fotg210)) {
++		fotg210_handle_controller_death(fotg210);
++		spin_unlock(&fotg210->lock);
++		return IRQ_HANDLED;
++	}
+ 	status = fotg210_readl(fotg210, &fotg210->regs->status);
+ 
+ 	/* e.g. cardbus physical eject */
+@@ -5222,7 +5409,12 @@
+ 		dbg_cmd(fotg210, "fatal", cmd);
+ 		dbg_status(fotg210, "fatal", status);
+ dead:
+-		usb_hc_died(hcd);
++		if (fotg210->fotg->nt) {
++			nt98513_require_halt(fotg210);
++			nt98513_notify_death(fotg210);
++		} else {
++			usb_hc_died(hcd);
++		}
+ 
+ 		/* Don't let the controller do anything more */
+ 		fotg210->shutdown = true;
+@@ -5262,6 +5454,20 @@
+ 	struct fotg210_hcd *fotg210 = hcd_to_fotg210(hcd);
+ 	struct list_head qtd_list;
+ 
++	if (fotg210->fotg->nt) {
++		unsigned long flags;
++		bool live;
++
++		if (!nt_usb_transfer_supported(usb_pipetype(urb->pipe)))
++			return -EOPNOTSUPP;
++		spin_lock_irqsave(&fotg210->lock, flags);
++		live = nt98513_check_live(fotg210);
++		if (!live)
++			fotg210_handle_controller_death(fotg210);
++		spin_unlock_irqrestore(&fotg210->lock, flags);
++		if (!live)
++			return -ESHUTDOWN;
++	}
+ 	INIT_LIST_HEAD(&qtd_list);
+ 
+ 	switch (usb_pipetype(urb->pipe)) {
+@@ -5534,6 +5740,111 @@
+ 	.clear_tt_buffer_complete = fotg210_clear_tt_buffer_complete,
+ };
+ 
++/* NT setup is called only by usb_add_hcd, before IRQ/RUN publication. */
++static int nt98513_hcd_setup(struct usb_hcd *hcd)
++{
++	struct fotg210_hcd *fotg210 = hcd_to_fotg210(hcd);
++	struct nt98513_usb *nt = fotg210->fotg->nt;
++	int ret;
++
++	if (nt->state.allocated || nt->state.published)
++		return -EBUSY;
++	spin_lock_init(&fotg210->lock);
++	ret = nt_usb_initialize(&nt->io, &nt->state);
++	if (ret)
++		return ret == NT_USB_TIMEOUT ? -ETIMEDOUT : -ENODEV;
++	fotg210->regs = (void __iomem *)fotg210->caps + 0x10;
++	fotg210->hcs_params = nt->state.hcs;
++	fotg210->sbrn = HCD_USB2;
++	if (!nt_usb_allocate_once(&nt->state))
++		return -EBUSY;
++	ret = hcd_fotg210_init(hcd);
++	if (ret)
++		nt_usb_release(&nt->state, 1);	/* allocator already unwound */
++	return ret;
++}
++
++static int nt98513_hcd_run(struct usb_hcd *hcd)
++{
++	int ret;
++
++	/*
++	 * IRQ is already requested by usb_add_hcd, but no root hub or URBs are published yet.
++	 * Serialize initial RUN against fatal IRQ handling.
++	 */
++	disable_irq(hcd->irq);
++	ret = fotg210_run(hcd);
++	enable_irq(hcd->irq);
++	return ret;
++}
++
++static const struct hc_driver nt98513_hc_driver = {
++	.description = "nt98513-usb-host",
++	.product_desc = "Experimental NT98513 USB host",
++	.hcd_priv_size = sizeof(struct fotg210_hcd),
++	.irq = fotg210_irq,
++	.flags = HCD_MEMORY | HCD_DMA | HCD_USB2,
++	.reset = nt98513_hcd_setup,
++	.start = nt98513_hcd_run,
++	.stop = fotg210_stop,
++	.shutdown = fotg210_shutdown,
++	.urb_enqueue = fotg210_urb_enqueue,
++	.urb_dequeue = fotg210_urb_dequeue,
++	.endpoint_disable = fotg210_endpoint_disable,
++	.endpoint_reset = fotg210_endpoint_reset,
++	.get_frame_number = fotg210_get_frame,
++	.hub_status_data = fotg210_hub_status_data,
++	.hub_control = fotg210_hub_control,
++	.clear_tt_buffer_complete = fotg210_clear_tt_buffer_complete,
++};
++
++int fotg210_nt98513_probe(struct platform_device *pdev, struct fotg210 *fotg)
++{
++	struct usb_hcd *hcd;
++	struct fotg210_hcd *fotg210;
++	int irq, ret;
++
++	/* Raw hardware IRQ27 was checked in DT; this is its Linux domain mapping. */
++	irq = platform_get_irq(pdev, 0);
++	if (irq <= 0)
++		return irq ? irq : -EINVAL;
++	hcd = usb_create_hcd(&nt98513_hc_driver, &pdev->dev, dev_name(&pdev->dev));
++	if (!hcd)
++		return -ENOMEM;
++	hcd->has_tt = 1;
++	hcd->regs = fotg->base;
++	hcd->rsrc_start = fotg->res->start;
++	hcd->rsrc_len = resource_size(fotg->res);
++	fotg210 = hcd_to_fotg210(hcd);
++	fotg210->fotg = fotg;
++	fotg210->caps = hcd->regs;
++	ret = usb_add_hcd(hcd, irq, 0);
++	if (ret) {
++		/*
++		 * reset/IRQ/start failures may skip .stop; registration failure calls it. The
++		 * allocation claim makes this common unwind exactly-once.
++		 */
++		if (fotg->nt->state.allocated)
++			fotg210_stop(hcd);
++		platform_set_drvdata(pdev, NULL);
++		usb_put_hcd(hcd);
++		return ret;
++	}
++	/*
++	 * All core failure paths have finished. A fault during registration is
++	 * reported on this successfully registered, permanently bound HCD; it
++	 * must not become a probe error which frees a still-registered root hub.
++	 */
++	spin_lock_irq(&fotg210->lock);
++	fotg->nt->core_ready = true;
++	if (fotg210->shutdown)
++		nt98513_notify_death(fotg210);
++	spin_unlock_irq(&fotg210->lock);
++	device_wakeup_disable(&pdev->dev);
++	platform_set_drvdata(pdev, hcd);
++	return 0;
++}
++
+ static void fotg210_init(struct fotg210_hcd *fotg210)
+ {
+ 	u32 value;
+--- a/drivers/usb/fotg210/fotg210-hcd.h
++++ b/drivers/usb/fotg210/fotg210-hcd.h
+@@ -610,7 +610,8 @@
+ static inline unsigned int
+ fotg210_get_speed(struct fotg210_hcd *fotg210, unsigned int portsc)
+ {
+-	return (readl(&fotg210->regs->otgcsr)
++	return (readl(fotg210->fotg->nt ? fotg210->fotg->nt->base + 0x80 :
++		(void __iomem *)&fotg210->regs->otgcsr)
+ 		& OTGCSR_HOST_SPD_TYP) >> 22;
+ }
+ 
+--- /dev/null
++++ b/drivers/usb/fotg210/fotg210-nt98513.c
+@@ -0,0 +1,154 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/* Disabled-by-default, inherited-state host candidate. No cold initialization. */
++#include <linux/delay.h>
++#include <linux/dma-mapping.h>
++#include <linux/io.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/of_irq.h>
++#include <linux/platform_device.h>
++#include <linux/slab.h>
++#include <linux/usb.h>
++#include <linux/usb/hcd.h>
++#include "fotg210.h"
++
++static u32 nt_read(void *context, unsigned int bank, unsigned int offset)
++{
++	struct nt98513_usb *nt = context;
++
++	return readl((bank == 0 ? nt->base : bank == 1 ? nt->phy : nt->mux) + offset);
++}
++
++static void nt_write(void *context, unsigned int bank, unsigned int offset, u32 value)
++{
++	struct nt98513_usb *nt = context;
++
++	writel(value, (bank == 0 ? nt->base : nt->phy) + offset);
++}
++
++static void nt_delay(void *context, unsigned int us)
++{
++	(void)context;
++	udelay(us);
++}
++
++static int nt_admit(struct platform_device *pdev)
++{
++	static const char *const allowed[] = {
++		"compatible", "reg", "reg-names", "interrupt-parent", "interrupts",
++		"interrupt-names", "status", "dr_mode",
++		"openipc,linux-exclusive-ownership",
++		"openipc,stock-initialized-host-handoff",
++		"openipc,stable-usb-clock", "phandle", "linux,phandle", "name",
++	};
++	struct device_node *np = pdev->dev.of_node;
++	struct resource *base, *phy;
++	struct of_phandle_args irq;
++	struct property *prop;
++	const char *mode;
++	unsigned int i, hwirq = ~0u;
++	int ret;
++
++	if (!np || of_get_child_count(np) || of_property_count_strings(np, "compatible") != 1 ||
++	    of_irq_count(np) != 1 || of_property_count_strings(np, "reg-names") != 2 ||
++	    of_property_match_string(np, "reg-names", "host") != 0 ||
++	    of_property_match_string(np, "reg-names", "phy") != 1 ||
++	    of_property_count_strings(np, "interrupt-names") != 1 ||
++	    of_property_match_string(np, "interrupt-names", "host") != 0)
++		return -EINVAL;
++	for_each_property_of_node(np, prop) {
++		for (i = 0; i < ARRAY_SIZE(allowed); i++)
++			if (!strcmp(prop->name, allowed[i]))
++				break;
++		if (i == ARRAY_SIZE(allowed))
++			return -EINVAL;
++	}
++	base = platform_get_resource(pdev, IORESOURCE_MEM, 0);
++	phy = platform_get_resource(pdev, IORESOURCE_MEM, 1);
++	if (!base || !phy || platform_get_resource(pdev, IORESOURCE_MEM, 2))
++		return -EINVAL;
++	ret = of_irq_parse_one(np, 0, &irq);
++	if (ret)
++		return ret;
++	if (irq.args_count == 1 && of_device_is_compatible(irq.np, "openipc,nt98513-intc"))
++		hwirq = irq.args[0];
++	of_node_put(irq.np);
++	ret = of_property_read_string(np, "dr_mode", &mode);
++	if (!nt_usb_admit(of_property_read_bool(np, "openipc,linux-exclusive-ownership"),
++			  of_property_read_bool(np, "openipc,stock-initialized-host-handoff"),
++			  of_property_read_bool(np, "openipc,stable-usb-clock"),
++			  !ret && !strcmp(mode, "host"),
++			  base->start, resource_size(base), phy->start, resource_size(phy), hwirq))
++		return -EINVAL;
++	return 0;
++}
++
++static int nt_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct nt98513_usb *nt;
++	struct fotg210 *fotg;
++	int ret = nt_admit(pdev);
++
++	/* No MMIO or USB-core PHY helper before explicit deployment admission. */
++	if (ret)
++		return dev_err_probe(dev, ret, "USB handoff contract rejected\n");
++	if (usb_disabled())
++		return -ENODEV;
++	ret = dma_set_mask_and_coherent(dev, DMA_BIT_MASK(32));
++	if (ret)
++		return ret;
++	fotg = devm_kzalloc(dev, sizeof(*fotg), GFP_KERNEL);
++	nt = devm_kzalloc(dev, sizeof(*nt), GFP_KERNEL);
++	if (!fotg || !nt)
++		return -ENOMEM;
++	nt->base = devm_platform_get_and_ioremap_resource(pdev, 0, &fotg->res);
++	if (IS_ERR(nt->base))
++		return PTR_ERR(nt->base);
++	nt->phy = devm_platform_ioremap_resource(pdev, 1);
++	if (IS_ERR(nt->phy))
++		return PTR_ERR(nt->phy);
++	/*
++	 * Intentional four-byte, read-only shared view. No CG reservation/write: the external
++	 * handoff must keep this mux and USB clocks stable for life.
++	 */
++	nt->mux = devm_ioremap(dev, 0xc0020010, 4);
++	if (!nt->mux)
++		return -ENOMEM;
++	nt->io = (struct nt_usb_io) {
++		.context = nt,
++		.read = nt_read,
++		.write = nt_write,
++		.delay = nt_delay,
++	};
++	fotg->dev = dev;
++	fotg->base = nt->base;
++	fotg->nt = nt;
++	return fotg210_nt98513_probe(pdev, fotg);
++}
++
++static void nt_shutdown(struct platform_device *pdev)
++{
++	struct usb_hcd *hcd = platform_get_drvdata(pdev);
++
++	if (hcd)
++		hcd->driver->shutdown(hcd);
++}
++
++static const struct of_device_id nt_match[] = {
++	{ .compatible = "openipc,nt98513-usb-host-v1" },
++	{ }
++};
++static struct platform_driver nt_driver = {
++	.probe = nt_probe,
++	.shutdown = nt_shutdown,
++	.driver = {
++		.name = "nt98513-usb-host",
++		.of_match_table = nt_match,
++		.suppress_bind_attrs = true,
++	},
++};
++/* Builtin and permanent: no unbind, module unload, PM or dynamic OF support. */
++builtin_platform_driver(nt_driver);
++MODULE_DESCRIPTION("Experimental NT98513 inherited USB host");
++MODULE_LICENSE("GPL");
+--- a/drivers/usb/fotg210/fotg210.h
++++ b/drivers/usb/fotg210/fotg210.h
+@@ -1,6 +1,14 @@
+ /* SPDX-License-Identifier: GPL-2.0 */
+ #ifndef __FOTG210_H
+ #define __FOTG210_H
++
++#include "nt98513-policy.h"
++struct nt98513_usb {
++	void __iomem *base, *phy, *mux;
++	struct nt_usb_io io;
++	struct nt_usb_state state;
++	bool core_ready, death_notified;
++};
+ 
+ enum gemini_port {
+ 	GEMINI_PORT_NONE = 0,
+@@ -9,6 +17,7 @@
+ };
+ 
+ struct fotg210 {
++	struct nt98513_usb *nt;
+ 	struct device *dev;
+ 	struct resource *res;
+ 	void __iomem *base;
+@@ -16,6 +25,8 @@
+ 	struct regmap *map;
+ 	enum gemini_port port;
+ };
++
++int fotg210_nt98513_probe(struct platform_device *pdev, struct fotg210 *fotg);
+ 
+ void fotg210_vbus(struct fotg210 *fotg, bool enable);
+ 
+--- /dev/null
++++ b/drivers/usb/fotg210/nt98513-policy.h
+@@ -0,0 +1,210 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++/* Production NT98513 policy. Callback MMIO permits inert host verification. */
++#ifndef NT98513_USB_POLICY_H
++#define NT98513_USB_POLICY_H
++struct nt_usb_io {
++	void *context;
++	unsigned int (*read)(void *context, unsigned int bank, unsigned int offset);
++	void (*write)(void *context, unsigned int bank, unsigned int offset, unsigned int value);
++	void (*delay)(void *context, unsigned int us);
++};
++
++struct nt_usb_state {
++	unsigned int mux, trim14, trim18, hcs;
++	unsigned int allocated, published;
++};
++
++enum nt_usb_result {
++	NT_USB_OK, NT_USB_INVALID, NT_USB_TIMEOUT, NT_USB_REMOVED
++};
++
++static inline int nt_usb_admit(unsigned int exclusive, unsigned int inherited,
++			       unsigned int stable_clock, unsigned int host,
++			       unsigned long long base, unsigned long long size,
++			       unsigned long long phy, unsigned long long phy_size,
++			       unsigned int hwirq)
++{
++	return exclusive && inherited && stable_clock && host && base == 0xc0600000 &&
++		size == 0x400 && phy == 0xc0601000 && phy_size == 0x200 && hwirq == 27;
++}
++
++static inline int nt_usb_caps(unsigned int cap, unsigned int hcs, unsigned int hcc)
++{
++	/* Conservative software whitelist, not a measured live capability value. */
++	return cap == 0x01000010 && (hcs & 15) == 1 && !(hcs & 0xff00) && !(hcc & 1) &&
++		hcs != ~0u && hcc != ~0u;
++}
++
++static inline unsigned int nt_usb_selector(unsigned int mux)
++{
++	switch (mux & 0x300) {
++	case 0x100:
++		return 3;
++	case 0x300:
++		return 1;
++	default:
++		return 0;
++	}
++}
++
++static inline unsigned int nt_usb_port_value(unsigned int old,
++					      unsigned int set, unsigned int clear)
++{
++	return ((old & ~clear) | set) & ~0x2au;
++}
++
++static inline int nt_usb_transfer_supported(unsigned int type)
++{
++	return type == 2 || type == 3;	/* Linux PIPE_CONTROL / PIPE_BULK */
++}
++
++static inline int nt_usb_allocate_once(struct nt_usb_state *s)
++{
++	if (s->allocated)
++		return 0;
++	s->allocated = 1;
++	return 1;
++}
++
++static inline int nt_usb_release(struct nt_usb_state *s, int halted)
++{
++	if (!s->allocated || (s->published && !halted))
++		return 0;
++	s->allocated = 0;
++	return 1;
++}
++
++static inline unsigned int nt_usb_read(const struct nt_usb_io *io,
++				       unsigned int bank, unsigned int offset)
++{
++	return io->read(io->context, bank, offset);
++}
++
++static inline void nt_usb_write(const struct nt_usb_io *io,
++				unsigned int bank, unsigned int offset, unsigned int value)
++{
++	io->write(io->context, bank, offset, value);
++}
++
++static inline enum nt_usb_result nt_usb_wait(const struct nt_usb_io *io,
++					    unsigned int offset, unsigned int mask,
++					    unsigned int want, unsigned int limit)
++{
++	unsigned int i, value;
++
++	for (i = 0; i < limit; i++) {
++		value = nt_usb_read(io, 0, offset);
++		if (value == ~0u)
++			return NT_USB_REMOVED;
++		if ((value & mask) == want)
++			return NT_USB_OK;
++		io->delay(io->context, 1);
++	}
++	return NT_USB_TIMEOUT;
++}
++
++static inline enum nt_usb_result nt_usb_halt(const struct nt_usb_io *io)
++{
++	unsigned int value = nt_usb_read(io, 0, 0x10);
++
++	if (value == ~0u)
++		return NT_USB_REMOVED;
++	nt_usb_write(io, 0, 0x18, 0);
++	/* RUN, async/periodic enables and async-advance request. */
++	nt_usb_write(io, 0, 0x10, value & ~0x71u);
++	return nt_usb_wait(io, 0x14, 0x1000, 0x1000, 2000);
++}
++
++static inline int nt_usb_update(const struct nt_usb_io *io, unsigned int bank,
++				unsigned int offset, unsigned int mask, unsigned int value)
++{
++	unsigned int old = nt_usb_read(io, bank, offset);
++
++	if (old == ~0u)
++		return 0;
++	nt_usb_write(io, bank, offset, (old & ~mask) | (value & mask));
++	old = nt_usb_read(io, bank, offset);
++	return old != ~0u && (old & mask) == (value & mask);
++}
++
++static inline int nt_usb_literal(const struct nt_usb_io *io, unsigned int bank,
++				 unsigned int offset, unsigned int value)
++{
++	nt_usb_write(io, bank, offset, value);
++	return nt_usb_read(io, bank, offset) == value;
++}
++
++static inline int nt_usb_live(const struct nt_usb_io *io, const struct nt_usb_state *s)
++{
++	unsigned int mux = nt_usb_read(io, 2, 0), role = nt_usb_read(io, 0, 0x80);
++	unsigned int selector = nt_usb_read(io, 0, 0x304), trim14 = nt_usb_read(io, 1, 0x14);
++	unsigned int trim18 = nt_usb_read(io, 1, 0x18), wrapper = nt_usb_read(io, 0, 0x108);
++
++	return mux != ~0u && role != ~0u && selector != ~0u && trim14 != ~0u &&
++		trim18 != ~0u && wrapper != ~0u && (mux & 0x300) == s->mux &&
++		!(role & (1u << 20)) &&
++		(selector & 3) == nt_usb_selector(s->mux) && (trim14 & 0x1c) == s->trim14 &&
++		(trim18 & 0x0e) == s->trim18 && (wrapper & 1);
++}
++
++static inline enum nt_usb_result nt_usb_initialize(const struct nt_usb_io *io,
++						   struct nt_usb_state *s)
++{
++	unsigned int cap, hcc, role, inherited, mux, command;
++	enum nt_usb_result result;
++
++	cap = nt_usb_read(io, 0, 0);
++	s->hcs = nt_usb_read(io, 0, 4);
++	hcc = nt_usb_read(io, 0, 8);
++	if (!nt_usb_caps(cap, s->hcs, hcc))
++		return NT_USB_INVALID;
++	role = nt_usb_read(io, 0, 0x80);
++	inherited = nt_usb_read(io, 0, 0x108);
++	s->trim14 = nt_usb_read(io, 1, 0x14);
++	s->trim18 = nt_usb_read(io, 1, 0x18);
++	if (role == ~0u || (role & (1u << 20)) || inherited == ~0u || !(inherited & 1) ||
++	    s->trim14 == ~0u || s->trim18 == ~0u)
++		return NT_USB_INVALID;
++	s->trim14 &= 0x1c;
++	s->trim18 &= 0x0e;
++	result = nt_usb_halt(io);
++	if (result)
++		return result;
++	command = nt_usb_read(io, 0, 0x10);
++
++	if (command == ~0u)
++		return NT_USB_REMOVED;
++	nt_usb_write(io, 0, 0x10, command | 2);
++	result = nt_usb_wait(io, 0x10, 2, 0, 250000);
++	if (result)
++		return result;
++	/*
++	 * Reestablish the selected original Linux sequence after reset. No generic Faraday GMIR,
++	 * OTGISR, eFuse reader, or shared clock writes are used.
++	 */
++	if (!nt_usb_update(io, 1, 0x14, 0x1c, s->trim14) ||
++	    !nt_usb_update(io, 1, 0x18, 0x0e, s->trim18) ||
++	    !nt_usb_update(io, 0, 0x108, 1, 1) ||
++	    !nt_usb_literal(io, 0, 0x310, 1) ||
++	    !nt_usb_update(io, 0, 0x100, 1u << 9, 0) ||
++	    !nt_usb_update(io, 0, 0x1c8, 1u << 5, 0) ||
++	    !nt_usb_update(io, 0, 0x40, 1u << 6, 0) ||
++	    !nt_usb_update(io, 0, 0x1c4, 1u << 2, 0) ||
++	    !nt_usb_update(io, 0, 0x80, 1u << 31, 0) ||
++	    !nt_usb_update(io, 0, 0x40, 0x3f3c, 0x220c) ||
++	    !nt_usb_update(io, 0, 0x80, 1u << 5, 0))
++		return NT_USB_INVALID;
++	io->delay(io->context, 2);
++	if (!nt_usb_update(io, 0, 0x80, 1u << 4, 1u << 4) ||
++	    !nt_usb_literal(io, 1, 0x144, 0x20) || !nt_usb_literal(io, 1, 0x140, 0x30) ||
++	    !nt_usb_literal(io, 1, 0x148, 0x6d) || !nt_usb_literal(io, 1, 0x144, 0))
++		return NT_USB_INVALID;
++	mux = nt_usb_read(io, 2, 0);
++	if (mux == ~0u)
++		return NT_USB_REMOVED;
++	s->mux = mux & 0x300;
++	if (!nt_usb_update(io, 0, 0x304, 3, nt_usb_selector(s->mux)) || !nt_usb_live(io, s))
++		return NT_USB_INVALID;
++	return NT_USB_OK;
++}
++#endif
