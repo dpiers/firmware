@@ -1,0 +1,172 @@
+--- a/Documentation/devicetree/bindings/net/openipc,nt98513-ethernet.yaml
++++ b/Documentation/devicetree/bindings/net/openipc,nt98513-ethernet.yaml
+@@ -8,7 +8,7 @@
+   - Daniel Piers <dpiers@users.noreply.github.com>
+ description: |
+   Conditional DWMAC4 candidate based on recovered software behavior. Activation
+-  requires Linux-exclusive MAC/IRQ ownership and independently supplied MII/RMII
++  requires Linux-exclusive MAC/IRQ/MDIO/PHY ownership and supplied MII/RMII
+   board wiring. Runtime accepts MAC IDs 0x40 and 0x41 only. PHY identity/address
+   are discovered by generic Clause22 MDIO; no PHY/reset/fixed-link child is
+   admitted. The clock is activation-only, with unknown physical rate. The
+@@ -48,7 +48,9 @@
+     description: Same permanent shared CC bank referenced by the clock provider
+   openipc,linux-exclusive-ownership:
+     type: boolean
+-    description: Boot contract excludes peer MAC/DMA and IRQ34 access for this boot
++    description: |
++      Boot contract excludes peer MAC/DMA, IRQ34, MDIO bus and selected PHY
++      register access for this boot. This includes the selected-PHY BMCR reset.
+   phy-mode:
+     enum: [mii, rmii]
+     description: Independently established physical board interface
+--- /dev/null
++++ b/drivers/net/ethernet/stmicro/stmmac/dwmac-nt98513-phy.h
+@@ -0,0 +1,52 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef DWMAC_NT98513_PHY_H
++#define DWMAC_NT98513_PHY_H
++/* Included after PHYLIB and delay definitions. This is the production policy,
++ * also exercised with host MDIO/time/locking fixtures in the offline tests.
++ */
++static inline int nt98513_phy_reset(struct phy_device *phy)
++{
++	int ret, val;
++
++	device_lock(&phy->mdio.dev);
++	/* A specific PHY driver's probe may already have programmed registers.
++	 * Its own attach/reset/configuration path must retain control.
++	 */
++	if (phy->mdio.dev.driver || phy->drv) {
++		ret = 0;
++		goto out;
++	}
++	/* A reset may erase early fixups needed by generic get_features before
++	 * phy_init_hw reapplies them. Do not guess how to replay such setup.
++	 */
++	if (phy->is_c45 || phy->has_fixups) {
++		ret = -EOPNOTSUPP;
++		goto out;
++	}
++	if (phy->attached_dev) {
++		ret = -EBUSY;
++		goto out;
++	}
++	/* Stock resets only its discovered PHY via BMCR bit15. This is not
++	 * evidence for any GPIO, power/reset wiring or vendor PHY register.
++	 */
++	val = phy_read(phy, MII_BMCR);
++	if (val < 0) {
++		ret = val;
++		goto out;
++	}
++	ret = phy_write(phy, MII_BMCR, val | BMCR_RESET);
++	if (ret)
++		goto out;
++	/* Use PHYLIB's standard 600ms reset poll and 1ms success settlement;
++	 * each underlying stmmac C22 transaction is itself bounded.
++	 */
++	ret = phy_read_poll_timeout(phy, MII_BMCR, val, !(val & BMCR_RESET),
++				    50000, 600000, true);
++	if (!ret)
++		msleep(1);
++out:
++	device_unlock(&phy->mdio.dev);
++	return ret;
++}
++#endif
+--- a/drivers/net/ethernet/stmicro/stmmac/dwmac-nt98513.c
++++ b/drivers/net/ethernet/stmicro/stmmac/dwmac-nt98513.c
+@@ -6,8 +6,10 @@
+  * DMA stop/free semantics remain hardware validation requirements.
+  */
+ #include <linux/clk.h>
++#include <linux/delay.h>
+ #include <linux/dma-mapping.h>
+ #include <linux/io.h>
++#include <linux/iopoll.h>
+ #include <linux/module.h>
+ #include <linux/of_address.h>
+ #include <linux/of_clk.h>
+@@ -17,6 +19,7 @@
+ #include <linux/soc/nt98513_cc_bank.h>
+ #include "stmmac_platform.h"
+ #include "dwmac-nt98513-policy.h"
++#include "dwmac-nt98513-phy.h"
+ 
+ struct nt98513_eth {
+ 	struct device *dev;
+@@ -209,7 +212,10 @@
+ 	plat->tx_queues_to_use = 1;
+ 	plat->flags = STMMAC_FLAG_SPH_DISABLE;
+ 	plat->riwt_off = 1;
+-	/* No reset sequence is established. MDIO's optional GPIO reset is off. */
++	/* Only the recovered selected-PHY BMCR software reset is established.
++	 * Keep the unrelated, unproved optional GPIO reset path disabled.
++	 */
++	plat->mdio_phy_setup = nt98513_phy_reset;
+ 	plat->mdio_bus_data->needs_reset = false;
+ 	ret = nt98513_eth_fault(eth);
+ 	if (!ret)
+--- /dev/null
++++ b/drivers/net/ethernet/stmicro/stmmac/stmmac-mdio-setup.h
+@@ -0,0 +1,27 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef STMMAC_MDIO_SETUP_H
++#define STMMAC_MDIO_SETUP_H
++/* The bus is registered, but not yet published in priv->mii. Callback failure
++ * must unwind it exactly once, just like stmmac's no-PHY path.
++ */
++static inline int stmmac_mdio_finish_registration(struct stmmac_priv *priv,
++						struct mii_bus *bus)
++{
++	struct phy_device *phy;
++	int ret = 0;
++
++	if (priv->plat->mdio_phy_setup) {
++		phy = priv->plat->phy_addr >= 0 &&
++		      priv->plat->phy_addr < PHY_MAX_ADDR ?
++			mdiobus_get_phy(bus, priv->plat->phy_addr) : NULL;
++		ret = phy ? priv->plat->mdio_phy_setup(phy) : -ENODEV;
++	}
++	if (ret) {
++		mdiobus_unregister(bus);
++		mdiobus_free(bus);
++		return ret;
++	}
++	priv->mii = bus;
++	return 0;
++}
++#endif
+--- a/drivers/net/ethernet/stmicro/stmmac/stmmac_mdio.c
++++ b/drivers/net/ethernet/stmicro/stmmac/stmmac_mdio.c
+@@ -22,6 +22,7 @@
+ 
+ #include "dwxgmac2.h"
+ #include "stmmac.h"
++#include "stmmac-mdio-setup.h"
+ 
+ #define MII_BUSY 0x00000001
+ #define MII_WRITE 0x00000002
+@@ -656,9 +657,7 @@
+ 	}
+ 
+ bus_register_done:
+-	priv->mii = new_bus;
+-
+-	return 0;
++	return stmmac_mdio_finish_registration(priv, new_bus);
+ 
+ no_phy_found:
+ 	mdiobus_unregister(new_bus);
+--- a/include/linux/stmmac.h
++++ b/include/linux/stmmac.h
+@@ -240,6 +240,8 @@
+ 	 */
+ 	phy_interface_t phy_interface;
+ 	struct stmmac_mdio_bus_data *mdio_bus_data;
++	/* Optional once-at-probe setup of the discovered PHY, before attachment. */
++	int (*mdio_phy_setup)(struct phy_device *phy);
+ 	struct device_node *phy_node;
+ 	struct fwnode_handle *port_node;
+ 	struct device_node *mdio_node;
