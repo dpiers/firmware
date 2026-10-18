@@ -118,7 +118,7 @@ class SourceTests(unittest.TestCase):
         out.mkdir(); (out / '.config').write_text('# console\n')
         with self.assertRaises(ValueError):
             self.helper.verify(self.out, out)
-        (out / '.config').write_text('BR2_PACKAGE_DIVINUS_OWNED_NT98513=y\n')
+        (out / '.config').write_text((TREE / 'configs/nt98513_owned_input_defconfig').read_text())
         self.helper.verify(self.out, out)
         (out / '.config').unlink(); (out / 'unknown').touch()
         with self.assertRaises(ValueError):
