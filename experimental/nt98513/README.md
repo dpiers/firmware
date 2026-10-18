@@ -170,3 +170,11 @@ configurations/package remain unchanged; source and guard compatibility checks
 passed without rebuilding those variants. Physical boot, GPIO and capture
 validation remain separate future work. No GPIO consumer, service or activation
 is installed.
+
+### Optional Ethernet source candidate
+
+The separate `nt98513-ethernet` target adds a conditional MAC/Clause-22 PHY
+candidate to the shared board. Its Ethernet node remains disabled; activation
+requires independently established board wiring and exclusive ownership.
+See [ETHERNET.md](ETHERNET.md) for the firmware evidence, build commands,
+offline validation and unresolved hardware contracts.

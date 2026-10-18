@@ -99,7 +99,11 @@ class FinalSource(unittest.TestCase):
         self.assertEqual(digest(PATCH), MANIFEST['patch4_sha256'])
         final = final_chain(PATCH)
         for r in MANIFEST['copies'] + MANIFEST['unchanged_external_files']:
-            self.assertEqual(digest(read(r['path'])), r['sha256'], r['path'])
+            data = read(r['path'])
+            # Manifest records the accepted GPIO baseline; Ethernet appends new integration.
+            if r['path'] in ('targets.mk', 'external.mk'):
+                data = data.split(b'# Optional offline Ethernet variant; existing variants above remain unchanged.\n')[0]
+            self.assertEqual(digest(data), r['sha256'], r['path'])
         for r in MANIFEST['unchanged_final_imports']:
             self.assertEqual(digest(final[r['kernel']]), r['sha256'])
         # Base/Divinus enable neither the new board nor drivers; package bytes above are unchanged.
