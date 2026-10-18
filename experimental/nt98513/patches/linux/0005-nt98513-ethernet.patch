@@ -1,0 +1,632 @@
+--- /dev/null
++++ b/Documentation/devicetree/bindings/net/openipc,nt98513-ethernet.yaml
+@@ -0,0 +1,80 @@
++# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/net/openipc,nt98513-ethernet.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++title: Experimental NT98513 inherited-state Ethernet
++maintainers:
++  - Daniel Piers <dpiers@users.noreply.github.com>
++description: |
++  Conditional DWMAC4 candidate based on recovered software behavior. Activation
++  requires Linux-exclusive MAC/IRQ ownership and independently supplied MII/RMII
++  board wiring. Runtime accepts MAC IDs 0x40 and 0x41 only. PHY identity/address
++  are discovered by generic Clause22 MDIO; no PHY/reset/fixed-link child is
++  admitted. The clock is activation-only, with unknown physical rate. The
++  separate C02B3008 read/nonzero ISR precheck is an experimental compatibility
++  hypothesis; its hardware role and side effects are not established. TOP bit18
++  and DGPIO bits0/1 must already be clear; this driver never changes them.
++  Ownership checks do not exclude later peer writes. Standard stmmac DMA
++  stop/free behavior, IRQ delivery and physical clocks remain unvalidated.
++properties:
++  compatible:
++    const: openipc,nt98513-ethernet-v1
++  reg:
++    items:
++      - description: MAC C02B0000, 0x2010 bytes
++      - description: Observed interrupt precheck C02B3008, four bytes
++      - description: Inherited TOP C0011000, four bytes
++      - description: Inherited DGPIO C00100D0, four bytes
++  reg-names:
++    items:
++      - const: mac
++      - const: irq-summary
++      - const: inherited-top
++      - const: inherited-dgpio
++  interrupts:
++    maxItems: 1
++    description: INTC hardware IRQ34, not Linux virtual IRQ34
++  interrupt-parent: true
++  interrupt-names:
++    const: macirq
++  clocks:
++    maxItems: 1
++    description: Existing shared-clock-v2 activation client1
++  clock-names:
++    const: stmmaceth
++  openipc,cc-bank:
++    $ref: /schemas/types.yaml#/definitions/phandle
++    description: Same permanent shared CC bank referenced by the clock provider
++  openipc,linux-exclusive-ownership:
++    type: boolean
++    description: Boot contract excludes peer MAC/DMA and IRQ34 access for this boot
++  phy-mode:
++    enum: [mii, rmii]
++    description: Independently established physical board interface
++  mac-address:
++    $ref: /schemas/types.yaml#/definitions/uint8-array
++    minItems: 6
++    maxItems: 6
++  local-mac-address:
++    $ref: /schemas/types.yaml#/definitions/uint8-array
++    minItems: 6
++    maxItems: 6
++  status:
++    enum: [okay, disabled, reserved]
++required:
++  - compatible
++  - reg
++  - reg-names
++  - interrupts
++  - interrupt-names
++  - clocks
++  - clock-names
++  - openipc,cc-bank
++anyOf:
++  - properties:
++      status:
++        enum: [disabled, reserved]
++    required: [status]
++  - required: [phy-mode, 'openipc,linux-exclusive-ownership']
++additionalProperties: false
+--- a/arch/mips/boot/dts/nt98513/Makefile
++++ b/arch/mips/boot/dts/nt98513/Makefile
+@@ -1,5 +1,7 @@
+ include $(srctree)/arch/mips/nt98513/clock-config-guard.mk
+-ifeq ($(CONFIG_NT98513_SHARED_CLOCK_BOARD),y)
++ifeq ($(CONFIG_NT98513_ETHERNET_BOARD),y)
++dtb-$(CONFIG_MACH_NT98513) += nt98513-ethernet.dtb
++else ifeq ($(CONFIG_NT98513_SHARED_CLOCK_BOARD),y)
+ dtb-$(CONFIG_MACH_NT98513) += nt98513-shared-clock.dtb
+ else
+ dtb-$(CONFIG_MACH_NT98513) += nt98513.dtb
+--- /dev/null
++++ b/arch/mips/boot/dts/nt98513/nt98513-ethernet.dts
+@@ -0,0 +1,21 @@
++// SPDX-License-Identifier: GPL-2.0-only
++#include "nt98513-shared-clock.dts"
++
++/ {
++ ethernet: ethernet@c02b0000 {
++  compatible = "openipc,nt98513-ethernet-v1";
++  reg = <0xc02b0000 0x2010>, <0xc02b3008 4>,
++        <0xc0011000 4>, <0xc00100d0 4>;
++  reg-names = "mac", "irq-summary", "inherited-top", "inherited-dgpio";
++  interrupt-parent = <&intc>;
++  interrupts = <34>;
++  interrupt-names = "macirq";
++  clocks = <&clock_owner 1>;
++  clock-names = "stmmaceth";
++  openipc,cc-bank = <&cc_bank>;
++  /* Board phy-mode and explicit ownership must be supplied before enabling.
++   * There is intentionally no generic fallback compatible or fixed link.
++   */
++  status = "disabled";
++ };
++};
+--- a/arch/mips/nt98513/Kconfig.shared-clock
++++ b/arch/mips/nt98513/Kconfig.shared-clock
+@@ -18,3 +18,13 @@
+ source "drivers/gpio/nt98513/Kconfig"
+ source "drivers/clk/nt98513-shared/Kconfig"
+ endif
++
++config NT98513_ETHERNET_BOARD
++ bool "Experimental NT98513 board with disabled Ethernet candidate"
++ depends on NT98513_SHARED_CLOCK_BOARD && NT98513_SHARED_CLOCK && NT98513_CC_BANK
++ depends on STMMAC_ETH=y && STMMAC_PLATFORM=y && !PM && !OF_DYNAMIC
++ default n
++ help
++   Embed the alternate board with a disabled NT98513 Ethernet node.
++   Activation requires explicit Linux-exclusive ownership and MII/RMII
++   board wiring. No hardware link, DMA lifecycle or IRQ contract is proved.
+--- a/drivers/net/ethernet/stmicro/stmmac/Kconfig
++++ b/drivers/net/ethernet/stmicro/stmmac/Kconfig
+@@ -41,6 +41,14 @@
+ 
+ if STMMAC_PLATFORM
+ 
++config DWMAC_NT98513
++	bool
++	depends on NT98513_ETHERNET_BOARD && STMMAC_ETH=y && STMMAC_PLATFORM=y
++	default y
++	help
++	  Builtin experimental NT98513 DWMAC4 inherited-state glue. The device
++	  is disabled by default; board ownership and PHY mode are required.
++
+ config DWMAC_DWC_QOS_ETH
+ 	tristate "Support for snps,dwc-qos-ethernet.txt DT binding."
+ 	select CRC32
+--- a/drivers/net/ethernet/stmicro/stmmac/Makefile
++++ b/drivers/net/ethernet/stmicro/stmmac/Makefile
+@@ -40,3 +40,5 @@
+ obj-$(CONFIG_DWMAC_INTEL)	+= dwmac-intel.o
+ obj-$(CONFIG_DWMAC_LOONGSON)	+= dwmac-loongson.o
+ stmmac-pci-objs:= stmmac_pci.o
++
++obj-$(CONFIG_DWMAC_NT98513) += dwmac-nt98513.o
+--- /dev/null
++++ b/drivers/net/ethernet/stmicro/stmmac/dwmac-nt98513-policy.h
+@@ -0,0 +1,58 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef DWMAC_NT98513_POLICY_H
++#define DWMAC_NT98513_POLICY_H
++/* Portable production policy; errno definitions supplied by the consumer. */
++struct nt98513_eth_input {
++	int exclusive, mode_ok, irqs, resources, unsupported, clock_ok, raw_irq_ok;
++};
++static inline int nt98513_eth_validate(const struct nt98513_eth_input *in)
++{
++	if (!in->exclusive)
++		return -EPERM;
++	if (!in->mode_ok || in->irqs != 1 || in->resources != 4 ||
++	    in->unsupported || !in->clock_ok || !in->raw_irq_ok)
++		return -EINVAL;
++	return 0;
++}
++static inline int nt98513_eth_resource(unsigned int index,
++				      unsigned long long start,
++				      unsigned long long size)
++{
++	static const unsigned long long starts[] = {
++		0xc02b0000, 0xc02b3008, 0xc0011000, 0xc00100d0
++	};
++	return index < 4 && start == starts[index] &&
++		size == (index ? 4 : 0x2010);
++}
++struct nt98513_eth_ops {
++	int (*enable)(void *);
++	int (*fault)(void *);
++	unsigned int (*top)(void *);
++	unsigned int (*pads)(void *);
++	unsigned int (*version)(void *);
++};
++static inline int nt98513_eth_activate(const struct nt98513_eth_ops *ops, void *p)
++{
++	int ret = ops->enable(p);
++	unsigned int version;
++
++	if (ret)
++		return ret;
++	ret = ops->fault(p);
++	if (ret)
++		return ret;
++	if (ops->top(p) & (1U << 18))
++		return -EBUSY;
++	if (ops->pads(p) & 3U)
++		return -EBUSY;
++	/* Explicitly admit only upstream DWMAC 4.00/4.10 IDs, never ID0 fallback.
++	 * Upper version bits are the integrator's user ID, not an IP revision.
++	 */
++	version = ops->version(p) & 0xff;
++	return version == 0x40 || version == 0x41 ? 0 : -ENODEV;
++}
++static inline int nt98513_eth_irq_pending(unsigned int summary)
++{
++	return summary != 0;
++}
++#endif
+--- /dev/null
++++ b/drivers/net/ethernet/stmicro/stmmac/dwmac-nt98513.c
+@@ -0,0 +1,238 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Experimental NT98513 inherited-state DWMAC4 candidate.
++ * C02B3008's read/nonzero test is recovered software behavior, not a proved
++ * register definition. Ownership, physical clocks, board wiring and upstream
++ * DMA stop/free semantics remain hardware validation requirements.
++ */
++#include <linux/clk.h>
++#include <linux/dma-mapping.h>
++#include <linux/io.h>
++#include <linux/module.h>
++#include <linux/of_address.h>
++#include <linux/of_clk.h>
++#include <linux/of_irq.h>
++#include <linux/of_net.h>
++#include <linux/platform_device.h>
++#include <linux/soc/nt98513_cc_bank.h>
++#include "stmmac_platform.h"
++#include "dwmac-nt98513-policy.h"
++
++struct nt98513_eth {
++	struct device *dev;
++	struct clk *clock;
++	struct nt98513_cc_bank *bank;
++	void __iomem *mac, *summary, *top, *pads;
++};
++
++static void nt98513_eth_clock_put(void *p)
++{
++	/* The established CCF provider's disable/unprepare are sticky no-ops. */
++	clk_disable_unprepare(p);
++}
++
++static int nt98513_eth_enable(void *p)
++{
++	struct nt98513_eth *eth = p;
++	int ret = clk_prepare_enable(eth->clock);
++
++	if (ret)
++		return ret;
++	return devm_add_action_or_reset(eth->dev, nt98513_eth_clock_put, eth->clock);
++}
++
++static int nt98513_eth_fault(void *p)
++{
++	struct nt98513_eth *eth = p;
++
++	/* Fresh supplier snapshot even when CCF reused a prepared clock. */
++	return nt_cc_status(eth->bank);
++}
++
++static unsigned int nt98513_eth_top(void *p)
++{
++	return readl(((struct nt98513_eth *)p)->top);
++}
++
++static unsigned int nt98513_eth_pads(void *p)
++{
++	return readl(((struct nt98513_eth *)p)->pads);
++}
++
++static unsigned int nt98513_eth_version(void *p)
++{
++	return readl(((struct nt98513_eth *)p)->mac + 0x110);
++}
++
++static const struct nt98513_eth_ops nt98513_eth_ops = {
++	.enable = nt98513_eth_enable,
++	.fault = nt98513_eth_fault,
++	.top = nt98513_eth_top,
++	.pads = nt98513_eth_pads,
++	.version = nt98513_eth_version,
++};
++
++static bool nt98513_eth_pending(void *p)
++{
++	struct nt98513_eth *eth = p;
++
++	/* Do not acknowledge, mask or reinterpret the observed boolean test. */
++	return nt98513_eth_irq_pending(readl(eth->summary));
++}
++
++static int nt98513_eth_check_dt(struct platform_device *pdev)
++{
++	static const char * const names[] = {
++		"mac", "irq-summary", "inherited-top", "inherited-dgpio"
++	};
++	/* Deliberately narrow topology: generic C22 PHY scan, no child/reset,
++	 * fixed-link, queue, AXI, clock-rate, pinctrl or offload overrides.
++	 */
++	static const char * const allowed[] = {
++		"compatible", "reg", "reg-names", "interrupt-parent", "interrupts",
++		"interrupt-names", "clocks", "clock-names", "openipc,cc-bank",
++		"openipc,linux-exclusive-ownership", "phy-mode", "status",
++		"mac-address", "local-mac-address", "phandle", "linux,phandle", "name"
++	};
++	struct device_node *np = pdev->dev.of_node, *bank, *clock_bank;
++	struct of_phandle_args clock, irq;
++	struct nt98513_eth_input in = { 0 };
++	struct property *prop;
++	struct resource *res;
++	phy_interface_t mode;
++	unsigned int i;
++	int ret;
++
++	in.exclusive = of_property_read_bool(np, "openipc,linux-exclusive-ownership");
++	in.mode_ok = !of_get_phy_mode(np, &mode) &&
++		(mode == PHY_INTERFACE_MODE_MII || mode == PHY_INTERFACE_MODE_RMII);
++	in.irqs = of_irq_count(np);
++	in.unsupported = of_get_child_count(np) != 0 ||
++		of_property_count_strings(np, "compatible") != 1;
++	for_each_property_of_node(np, prop) {
++		for (i = 0; i < ARRAY_SIZE(allowed); i++)
++			if (!strcmp(prop->name, allowed[i]))
++				break;
++		if (i == ARRAY_SIZE(allowed))
++			in.unsupported = 1;
++	}
++	if (of_property_count_strings(np, "reg-names") != 4 ||
++	    of_property_count_strings(np, "interrupt-names") != 1 ||
++	    of_property_match_string(np, "interrupt-names", "macirq") != 0)
++		in.unsupported = 1;
++	for (i = 0; i < 4; i++) {
++		res = platform_get_resource(pdev, IORESOURCE_MEM, i);
++		if (!res || !nt98513_eth_resource(i, res->start, resource_size(res)) ||
++		    strcmp(res->name, names[i]))
++			return -EINVAL;
++		in.resources++;
++	}
++	if (platform_get_resource(pdev, IORESOURCE_MEM, 4))
++		in.resources++;
++	ret = of_irq_parse_one(np, 0, &irq);
++	if (!ret) {
++		in.raw_irq_ok = irq.args_count == 1 && irq.args[0] == 34 &&
++			of_device_is_compatible(irq.np, "openipc,nt98513-intc");
++		of_node_put(irq.np);
++	}
++	ret = of_parse_phandle_with_args(np, "clocks", "#clock-cells", 0, &clock);
++	if (!ret) {
++		bank = of_parse_phandle(np, "openipc,cc-bank", 0);
++		clock_bank = of_parse_phandle(clock.np, "openipc,cc-bank", 0);
++		in.clock_ok = of_count_phandle_with_args(np, "clocks", "#clock-cells") == 1 &&
++			of_property_count_strings(np, "clock-names") == 1 &&
++			of_property_match_string(np, "clock-names", "stmmaceth") == 0 &&
++			clock.args_count == 1 && clock.args[0] == 1 &&
++			of_device_is_compatible(clock.np, "openipc,nt98513-shared-clock-v2") &&
++			bank && bank == clock_bank;
++		of_node_put(bank);
++		of_node_put(clock_bank);
++		of_node_put(clock.np);
++	}
++	return nt98513_eth_validate(&in);
++}
++
++static int nt98513_eth_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct plat_stmmacenet_data *plat;
++	struct stmmac_resources res;
++	struct nt98513_eth *eth;
++	int ret;
++
++	ret = nt98513_eth_check_dt(pdev);
++	if (ret)
++		return dev_err_probe(dev, ret, "unqualified Ethernet board contract\n");
++	eth = devm_kzalloc(dev, sizeof(*eth), GFP_KERNEL);
++	if (!eth)
++		return -ENOMEM;
++	eth->dev = dev;
++	eth->bank = devm_nt98513_cc_bank_get(dev);
++	if (IS_ERR(eth->bank))
++		return PTR_ERR(eth->bank);
++	eth->clock = devm_clk_get(dev, "stmmaceth");
++	if (IS_ERR(eth->clock))
++		return PTR_ERR(eth->clock);
++	ret = stmmac_get_platform_resources(pdev, &res);
++	if (ret)
++		return ret;
++	eth->mac = res.addr;
++	eth->summary = devm_platform_ioremap_resource(pdev, 1);
++	if (IS_ERR(eth->summary))
++		return PTR_ERR(eth->summary);
++	eth->top = devm_platform_ioremap_resource(pdev, 2);
++	if (IS_ERR(eth->top))
++		return PTR_ERR(eth->top);
++	eth->pads = devm_platform_ioremap_resource(pdev, 3);
++	if (IS_ERR(eth->pads))
++		return PTR_ERR(eth->pads);
++	/* No MAC read, generic parser or core probe precedes checked activation. */
++	ret = nt98513_eth_activate(&nt98513_eth_ops, eth);
++	if (ret)
++		return dev_err_probe(dev, ret, "Ethernet inherited state or revision rejected\n");
++	ret = dma_set_mask_and_coherent(dev, DMA_BIT_MASK(32));
++	if (ret)
++		return ret;
++	plat = stmmac_probe_config_dt(pdev, res.mac);
++	if (IS_ERR(plat))
++		return PTR_ERR(plat);
++	plat->has_gmac = 0;
++	plat->has_gmac4 = 1;
++	plat->clk_csr = 1; /* recovered C22 encoding, not inferred from rate0 */
++	plat->unknown_csr_rate = true;
++	plat->irq_pending = nt98513_eth_pending;
++	plat->bsp_priv = eth;
++	plat->host_dma_width = 32;
++	plat->maxmtu = ETH_DATA_LEN;
++	plat->max_speed = SPEED_100;
++	plat->rx_queues_to_use = 1;
++	plat->tx_queues_to_use = 1;
++	plat->flags = STMMAC_FLAG_SPH_DISABLE;
++	plat->riwt_off = 1;
++	/* No reset sequence is established. MDIO's optional GPIO reset is off. */
++	plat->mdio_bus_data->needs_reset = false;
++	ret = nt98513_eth_fault(eth);
++	if (!ret)
++		ret = stmmac_pltfr_probe(pdev, plat, &res);
++	if (ret)
++		stmmac_remove_config_dt(pdev, plat);
++	return ret;
++}
++
++static const struct of_device_id nt98513_eth_match[] = {
++	{ .compatible = "openipc,nt98513-ethernet-v1" },
++	{ }
++};
++
++/* Builtin, permanent node: no user unbind, module unload, OF removal or PM. */
++static struct platform_driver nt98513_eth_driver = {
++	.probe = nt98513_eth_probe,
++	.driver = {
++		.name = "nt98513-ethernet",
++		.of_match_table = nt98513_eth_match,
++		.suppress_bind_attrs = true,
++	},
++};
++builtin_platform_driver(nt98513_eth_driver);
++MODULE_DESCRIPTION("Experimental NT98513 inherited-state DWMAC4");
++MODULE_LICENSE("GPL");
+--- a/drivers/net/ethernet/stmicro/stmmac/dwmac4_core.c
++++ b/drivers/net/ethernet/stmicro/stmmac/dwmac4_core.c
+@@ -19,6 +19,7 @@
+ #include "stmmac_pcs.h"
+ #include "dwmac4.h"
+ #include "dwmac5.h"
++#include "stmmac-csr-policy.h"
+ 
+ static void dwmac4_core_init(struct mac_device_info *hw,
+ 			     struct net_device *dev)
+@@ -26,7 +27,7 @@
+ 	struct stmmac_priv *priv = netdev_priv(dev);
+ 	void __iomem *ioaddr = hw->pcsr;
+ 	u32 value = readl(ioaddr + GMAC_CONFIG);
+-	u32 clk_rate;
++	u32 tick;
+ 
+ 	value |= GMAC_CORE_INIT;
+ 
+@@ -50,17 +51,19 @@
+ 	writel(value, ioaddr + GMAC_CONFIG);
+ 
+ 	/* Configure LPI 1us counter to number of CSR clock ticks in 1us - 1 */
+-	clk_rate = clk_get_rate(priv->plat->stmmac_clk);
+-	writel((clk_rate / 1000000) - 1, ioaddr + GMAC4_MAC_ONEUS_TIC_COUNTER);
++	if (stmmac_csr_tick(clk_get_rate(priv->plat->stmmac_clk),
++			    priv->plat->unknown_csr_rate, &tick))
++		writel(tick, ioaddr + GMAC4_MAC_ONEUS_TIC_COUNTER);
+ 
+ 	/* Enable GMAC interrupts */
+-	value = GMAC_INT_DEFAULT_ENABLE;
++	value = priv->plat->unknown_csr_rate ? 0 : GMAC_INT_DEFAULT_ENABLE;
+ 
+ 	if (hw->pcs)
+ 		value |= GMAC_PCS_IRQ_DEFAULT;
+ 
+ 	/* Enable FPE interrupt */
+-	if ((GMAC_HW_FEAT_FPESEL & readl(ioaddr + GMAC_HW_FEATURE3)) >> 26)
++	if (!priv->plat->unknown_csr_rate &&
++	    (GMAC_HW_FEAT_FPESEL & readl(ioaddr + GMAC_HW_FEATURE3)))
+ 		value |= GMAC_INT_FPE_EN;
+ 
+ 	writel(value, ioaddr + GMAC_INT_EN);
+--- /dev/null
++++ b/drivers/net/ethernet/stmicro/stmmac/stmmac-csr-policy.h
+@@ -0,0 +1,13 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef STMMAC_CSR_POLICY_H
++#define STMMAC_CSR_POLICY_H
++/* An activation-only clock has no timing information. Never underflow. */
++static inline int stmmac_csr_tick(unsigned long rate, int unknown,
++				unsigned int *tick)
++{
++	if (unknown || rate < 1000000)
++		return 0;
++	*tick = rate / 1000000 - 1;
++	return 1;
++}
++#endif
+--- a/drivers/net/ethernet/stmicro/stmmac/stmmac_ethtool.c
++++ b/drivers/net/ethernet/stmicro/stmmac/stmmac_ethtool.c
+@@ -826,6 +826,12 @@
+ {
+ 	struct stmmac_priv *priv = netdev_priv(dev);
+ 
++	if (priv->plat->unknown_csr_rate) {
++		wol->supported = 0;
++		wol->wolopts = 0;
++		return;
++	}
++
+ 	if (!priv->plat->pmt)
+ 		return phylink_ethtool_get_wol(priv->phylink, wol);
+ 
+@@ -843,6 +849,9 @@
+ {
+ 	struct stmmac_priv *priv = netdev_priv(dev);
+ 	u32 support = WAKE_MAGIC | WAKE_UCAST;
++
++	if (priv->plat->unknown_csr_rate)
++		return -EOPNOTSUPP;
+ 
+ 	if (!device_can_wakeup(priv->device))
+ 		return -EOPNOTSUPP;
+--- a/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
++++ b/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
+@@ -5911,6 +5911,10 @@
+ 	/* Check if adapter is up */
+ 	if (test_bit(STMMAC_DOWN, &priv->state))
+ 		return IRQ_HANDLED;
++
++	if (priv->plat->irq_pending &&
++	    !priv->plat->irq_pending(priv->plat->bsp_priv))
++		return IRQ_NONE;
+ 
+ 	/* Check if a fatal error happened */
+ 	if (stmmac_safety_feat_interrupt(priv))
+@@ -7037,6 +7041,26 @@
+ 
+ 	/* Get the HW capability (new GMAC newer than 3.50a) */
+ 	priv->hw_cap_support = stmmac_get_hw_features(priv);
++	if (priv->plat->unknown_csr_rate) {
++		struct dma_features raw = priv->dma_cap;
++
++		if (!priv->hw_cap_support || !raw.mbps_10_100 || !raw.sma_mdio)
++			return -ENODEV;
++		memset(&priv->dma_cap, 0, sizeof(priv->dma_cap));
++		priv->dma_cap.mbps_10_100 = raw.mbps_10_100;
++		priv->dma_cap.half_duplex = raw.half_duplex;
++		priv->dma_cap.sma_mdio = raw.sma_mdio;
++		priv->dma_cap.hash_filter = raw.hash_filter;
++		priv->dma_cap.hash_tb_sz = raw.hash_tb_sz;
++		priv->dma_cap.multi_addr = raw.multi_addr;
++		priv->dma_cap.number_rx_channel = raw.number_rx_channel;
++		priv->dma_cap.number_tx_channel = raw.number_tx_channel;
++		priv->dma_cap.number_rx_queues = raw.number_rx_queues;
++		priv->dma_cap.number_tx_queues = raw.number_tx_queues;
++		priv->dma_cap.rx_fifo_size = raw.rx_fifo_size;
++		priv->dma_cap.tx_fifo_size = raw.tx_fifo_size;
++		priv->dma_cap.addr64 = 32;
++	}
+ 	if (priv->hw_cap_support) {
+ 		dev_info(priv->device, "DMA HW capability register supported\n");
+ 
+@@ -7473,7 +7497,8 @@
+ 	ndev->xdp_features = NETDEV_XDP_ACT_BASIC | NETDEV_XDP_ACT_REDIRECT |
+ 			     NETDEV_XDP_ACT_XSK_ZEROCOPY;
+ 
+-	ret = stmmac_tc_init(priv, priv);
++	ret = priv->plat->unknown_csr_rate ? -EOPNOTSUPP :
++		stmmac_tc_init(priv, priv);
+ 	if (!ret) {
+ 		ndev->hw_features |= NETIF_F_HW_TC;
+ 	}
+@@ -7556,6 +7581,12 @@
+ 	if (priv->dma_cap.rssen && priv->plat->rss_en)
+ 		ndev->features |= NETIF_F_RXHASH;
+ 
++	if (priv->plat->unknown_csr_rate) {
++		/* Clearing hw_features also prevents ethtool from re-enabling them. */
++		ndev->hw_features = 0;
++		ndev->features &= NETIF_F_SOFT_FEATURES;
++		ndev->xdp_features = 0;
++	}
+ 	ndev->vlan_features |= ndev->features;
+ 	/* TSO doesn't work on VLANs yet */
+ 	ndev->vlan_features &= ~NETIF_F_TSO;
+--- a/drivers/net/ethernet/stmicro/stmmac/stmmac_mdio.c
++++ b/drivers/net/ethernet/stmicro/stmmac/stmmac_mdio.c
+@@ -573,7 +573,7 @@
+ 	} else {
+ 		new_bus->read = &stmmac_mdio_read_c22;
+ 		new_bus->write = &stmmac_mdio_write_c22;
+-		if (priv->plat->has_gmac4) {
++		if (priv->plat->has_gmac4 && !priv->plat->unknown_csr_rate) {
+ 			new_bus->read_c45 = &stmmac_mdio_read_c45;
+ 			new_bus->write_c45 = &stmmac_mdio_write_c45;
+ 		}
+--- a/include/linux/stmmac.h
++++ b/include/linux/stmmac.h
+@@ -283,6 +283,10 @@
+ 	int (*crosststamp)(ktime_t *device, struct system_counterval_t *system,
+ 			   void *ctx);
+ 	void (*dump_debug_regs)(void *priv);
++	/* Optional precheck, called after DOWN and before any main-ISR MAC I/O. */
++	bool (*irq_pending)(void *priv);
++	/* Activation-only CSR clock: no timing-dependent/optional offloads. */
++	bool unknown_csr_rate;
+ 	void *bsp_priv;
+ 	struct clk *stmmac_clk;
+ 	struct clk *pclk;

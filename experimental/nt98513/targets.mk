@@ -54,3 +54,12 @@ nt98513-shared-clock-source: nt98513-shared-clock-defconfig
 	$(MAKE) -C "$(NT98513_BUILDROOT)" O="$(NT98513_OUTPUT)" BR2_EXTERNAL="$(NT98513_EXTERNAL)" source
 nt98513-shared-clock: nt98513-shared-clock-defconfig
 	$(MAKE) -C "$(NT98513_BUILDROOT)" O="$(NT98513_OUTPUT)" BR2_EXTERNAL="$(NT98513_EXTERNAL)" all
+# Optional offline Ethernet variant; existing variants above remain unchanged.
+.PHONY: nt98513-ethernet-defconfig nt98513-ethernet-source nt98513-ethernet
+nt98513-ethernet-defconfig:
+	python3 "$(NT98513_EXTERNAL)/tools/check_ethernet_output.py" "$(NT98513_OUTPUT)"
+	$(MAKE) -C "$(NT98513_BUILDROOT)" O="$(NT98513_OUTPUT)" BR2_EXTERNAL="$(NT98513_EXTERNAL)" nt98513_ethernet_defconfig
+nt98513-ethernet-source: nt98513-ethernet-defconfig
+	$(MAKE) -C "$(NT98513_BUILDROOT)" O="$(NT98513_OUTPUT)" BR2_EXTERNAL="$(NT98513_EXTERNAL)" source
+nt98513-ethernet: nt98513-ethernet-defconfig
+	$(MAKE) -C "$(NT98513_BUILDROOT)" O="$(NT98513_OUTPUT)" BR2_EXTERNAL="$(NT98513_EXTERNAL)" all
