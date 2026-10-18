@@ -80,3 +80,20 @@ nt98513-ethernet-owned-input-source: nt98513-ethernet-owned-input-defconfig
 nt98513-ethernet-owned-input: nt98513-ethernet-owned-input-defconfig
 	$(MAKE) -C "$(NT98513_BUILDROOT)" O="$(NT98513_OUTPUT)" BR2_EXTERNAL="$(NT98513_EXTERNAL)" \
 		NT98513_DIVINUS_SOURCE_DIR="$(NT98513_DIVINUS_SOURCE_DIR)" all
+
+# Explicit USB host candidate, preserving all prior output variants.
+.PHONY: nt98513-usb-host-check-source nt98513-usb-host-defconfig
+.PHONY: nt98513-usb-host-source nt98513-usb-host
+nt98513-usb-host-check-source:
+	python3 "$(NT98513_EXTERNAL)/tools/prepare_divinus_source.py" \
+		--verify-archive --output-dir "$(NT98513_DIVINUS_SOURCE_DIR)" \
+		--build-output "$(NT98513_OUTPUT)" --build-variant usb-host
+nt98513-usb-host-defconfig: nt98513-usb-host-check-source
+	$(MAKE) -C "$(NT98513_BUILDROOT)" O="$(NT98513_OUTPUT)" BR2_EXTERNAL="$(NT98513_EXTERNAL)" \
+		NT98513_DIVINUS_SOURCE_DIR="$(NT98513_DIVINUS_SOURCE_DIR)" nt98513_usb_host_defconfig
+nt98513-usb-host-source: nt98513-usb-host-defconfig
+	$(MAKE) -C "$(NT98513_BUILDROOT)" O="$(NT98513_OUTPUT)" BR2_EXTERNAL="$(NT98513_EXTERNAL)" \
+		NT98513_DIVINUS_SOURCE_DIR="$(NT98513_DIVINUS_SOURCE_DIR)" source
+nt98513-usb-host: nt98513-usb-host-defconfig
+	$(MAKE) -C "$(NT98513_BUILDROOT)" O="$(NT98513_OUTPUT)" BR2_EXTERNAL="$(NT98513_EXTERNAL)" \
+		NT98513_DIVINUS_SOURCE_DIR="$(NT98513_DIVINUS_SOURCE_DIR)" all
