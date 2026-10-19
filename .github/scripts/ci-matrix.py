@@ -197,7 +197,13 @@ NO_BUILD_SCRIPTS = {
     # build-one.yml's request parser and its test: dispatch and shell-tests
     # only, never part of a board build.
     "build_request.sh", "test_build_request.sh",
+    # Native test execution and its gate controls never feed a board build.
+    "run_nt98513_wifi_native.py", "test_nt98513_wifi_native_runner.py",
 }
+
+# Exact standalone CI inputs, not a blanket exemption for future Dockerfiles.
+# This image contains only host tools for the isolated native Wi-Fi test job.
+NO_BUILD_FILES = {".github/docker/nt98513-wifi-native.Dockerfile"}
 
 # CI plumbing: it decides how the build runs but cannot change a byte of what
 # ends up on a camera, so what needs proving is that the steps still work, not
@@ -562,7 +568,7 @@ def classify(tree, changed, labels=(), event="pull_request", draft=False,
     boards, smoked = set(), None
     for path in changed:
         if DOCS.match(path) or MARKDOWN.match(path) or REVIEW_CONFIG.match(path) \
-                or REPO_META.match(path):
+                or REPO_META.match(path) or path in NO_BUILD_FILES:
             continue
         if GITHUB_META.match(path):
             continue
@@ -897,6 +903,9 @@ def self_test():
             if not os.path.exists(os.path.join(REPO_ROOT, ".github", directory, name)):
                 problems.append(
                     f".github/{directory}/{name} is classified but does not exist")
+    for path in NO_BUILD_FILES:
+        if not os.path.isfile(os.path.join(REPO_ROOT, path)):
+            problems.append(f"{path} is classified but does not exist")
     # Every file under .github/scripts and .github/workflows is classified.
     # An unlisted one widens, which is safe but costs a full matrix on every
     # push of every PR that touches it -- so make the PR that adds it decide.
@@ -1016,6 +1025,15 @@ def self_test():
         ([".github/scripts/test_excludes_report.sh"], 0, "shell-tests: excludes"),
         ([".github/scripts/test_ca_bundle_lite.sh"], 0, "shell-tests: lite CA bundle"),
         ([".github/scripts/test_network_failover.sh"], 0, "shell-tests: network failover"),
+        ([".github/scripts/run_nt98513_wifi_native.py"], 0, "native Wi-Fi test gate"),
+        ([".github/scripts/test_nt98513_wifi_native_runner.py"], 0, "native Wi-Fi gate controls"),
+        ([".github/docker/nt98513-wifi-native.Dockerfile"], 0, "native CI tools only"),
+        ([".github/docker/some-new-image.Dockerfile"], full, "an unknown Dockerfile widens"),
+        ([".github/docker/nt98513-wifi-native.Dockerfile.extra"], full,
+         "the native CI Dockerfile exception is an exact path"),
+        ([".github/scripts/run_nt98513_wifi_native.py",
+          ".github/docker/nt98513-wifi-native.Dockerfile", "general/overlay/etc/passwd"],
+         full, "native CI tools do not hide a firmware change"),
         ([".github/workflows/toolchain-asan.yml"], 0, "ASan toolchain is dispatch-only"),
         ([".github/workflows/vendor-abi.yml"], 0, "the advisory ABI audit"),
         ([".github/workflows/lint.yml"], 0, "the workflow linter never builds"),

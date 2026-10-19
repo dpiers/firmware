@@ -189,3 +189,53 @@ routes and resolver; resolve the conflict or restart the controlled RAM
 session before retrying. The runtime deliberately has no automatic crash
 recovery that guesses ownership. No hardware association, DHCP delivery,
 reconnect reliability or soak stability is established by the offline tests.
+
+## Continuous native regressions
+
+The `shell-tests` workflow runs for PRs targeting `master` or
+`codex/nt98513-*`. Its dedicated Wi-Fi job runs the unchanged 14 process and
+44 network/resolver cases in a disposable Linux container, and the aggregate
+Shell Tests Gate requires that job to succeed. The strict runner checks the
+exact method identities and executed count; skips, missing cases, errors,
+failures and expected-failure outcomes all fail the gate. The ordinary
+non-root discovery job remains useful for other checks but does not supply
+this native coverage.
+
+From the firmware repository root, reproduce the dedicated job with:
+
+```sh
+docker build --platform linux/amd64 \
+  -f .github/docker/nt98513-wifi-native.Dockerfile \
+  -t nt98513-wifi-native:ci .github/docker
+GITHUB_WORKSPACE="$PWD"
+docker run --platform linux/amd64 --network none --cap-drop ALL \
+  --security-opt no-new-privileges --read-only --user 0:0 \
+  --pids-limit 128 --memory 512m \
+  --mount "type=bind,src=$GITHUB_WORKSPACE,dst=/source,readonly" \
+  --mount "type=bind,src=$GITHUB_WORKSPACE/experimental/nt98513/tests,dst=/test,readonly" \
+  --tmpfs /root:rw,nosuid,nodev,noexec,mode=0700,size=32m \
+  --tmpfs /run:rw,nosuid,nodev,noexec,mode=0755,size=16m \
+  --tmpfs /tmp:rw,nosuid,nodev,exec,mode=1777,size=128m \
+  --tmpfs /out:rw,nosuid,nodev,exec,mode=0700,size=64m \
+  -e NT98513_WIFI_NATIVE_TESTS=1 -e WIFI_NET_TEST_BUILD=/out/net \
+  nt98513-wifi-native:ci sh -ec '
+    cc --version
+    python3 --version
+    dpkg-query -W build-essential gcc libc6-dev python3
+    python3 /source/.github/scripts/test_nt98513_wifi_native_runner.py
+    python3 /source/.github/scripts/run_nt98513_wifi_native.py
+  '
+```
+
+Image acquisition/build requires public registry and Debian package access;
+execution has no network access or Linux capabilities. The official Debian
+base is pinned by digest; apt package resolution remains repository-dependent,
+so this is a reproducible public build recipe, not a bit-identical toolchain
+claim. The job prints compiler and package versions. Container UID 0 is
+required to test root-owned file admission; the repository stays read-only,
+and fixtures/compiler outputs live only in the private tmpfs mounts. The
+command leaves its stopped container available for inspection. These tests
+execute authored host-native binaries and fake child/control/network
+boundaries, never the MIPS target, radio, real network configuration or vendor
+firmware. Passing CI does not establish hardware behavior or replace the
+separate firmware build and artifact checks.
