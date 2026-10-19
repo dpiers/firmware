@@ -1,1 +1,5 @@
 source "$BR2_EXTERNAL_NT98513_PATH/package/divinus-owned-nt98513/Config.in"
+# Optional manual Wi-Fi packages; existing registrations above remain unchanged.
+source "$BR2_EXTERNAL_NT98513_PATH/package/wpa-supplicant-nt98513/Config.in"
+source "$BR2_EXTERNAL_NT98513_PATH/package/rtl8188fu-firmware-nt98513/Config.in"
+source "$BR2_EXTERNAL_NT98513_PATH/package/nt98513-wifi-control/Config.in"

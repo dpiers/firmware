@@ -1,0 +1,11 @@
+config BR2_PACKAGE_WPA_SUPPLICANT_NT98513
+	bool "NT98513 isolated WPA2 supplicant"
+	depends on BR2_STATIC_LIBS
+	depends on BR2_TOOLCHAIN_HAS_THREADS
+	depends on BR2_USE_MMU
+	depends on !BR2_PACKAGE_WPA_SUPPLICANT
+	select BR2_PACKAGE_LIBNL
+	help
+	  Pinned wpa_supplicant 2.12 for the explicit NT98513 station image.
+	  Static nl80211/internal crypto, private control interface and CLI.
+	  No network configuration or startup service is installed.
