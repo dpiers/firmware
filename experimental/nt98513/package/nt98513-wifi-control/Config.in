@@ -1,0 +1,12 @@
+config BR2_PACKAGE_NT98513_WIFI_CONTROL
+	bool "NT98513 manual Wi-Fi station supervisor"
+	depends on BR2_STATIC_LIBS
+	depends on BR2_TOOLCHAIN_HAS_THREADS
+	depends on BR2_USE_MMU
+	depends on !BR2_PACKAGE_WPA_SUPPLICANT
+	select BR2_PACKAGE_WPA_SUPPLICANT_NT98513
+	select BR2_PACKAGE_BUSYBOX
+	help
+	  Explicit owner-started WPA2 station and IPv4 DHCP lifecycle.
+	  No boot service or credentials are installed. Requires rtl8xxxu,
+	  udhcpc, safe root-owned input and exclusive resolver ownership.

@@ -97,3 +97,33 @@ nt98513-usb-host-source: nt98513-usb-host-defconfig
 nt98513-usb-host: nt98513-usb-host-defconfig
 	$(MAKE) -C "$(NT98513_BUILDROOT)" O="$(NT98513_OUTPUT)" BR2_EXTERNAL="$(NT98513_EXTERNAL)" \
 		NT98513_DIVINUS_SOURCE_DIR="$(NT98513_DIVINUS_SOURCE_DIR)" all
+
+# Manual-only Wi-Fi candidate. Every source check precedes Buildroot mutation.
+.PHONY: nt98513-wifi-check-source nt98513-wifi-defconfig nt98513-wifi-source nt98513-wifi nt98513-wifi-image
+nt98513-wifi-check-source:
+	python3 "$(NT98513_EXTERNAL)/tools/prepare_divinus_source.py" \
+		--verify-archive --output-dir "$(NT98513_DIVINUS_SOURCE_DIR)" \
+		--build-output "$(NT98513_OUTPUT)" --build-variant wifi
+nt98513-wifi-defconfig: nt98513-wifi-check-source
+	$(MAKE) -C "$(NT98513_BUILDROOT)" O="$(NT98513_OUTPUT)" BR2_EXTERNAL="$(NT98513_EXTERNAL)" \
+		NT98513_DIVINUS_SOURCE_DIR="$(NT98513_DIVINUS_SOURCE_DIR)" nt98513_wifi_defconfig
+nt98513-wifi-source: nt98513-wifi-defconfig
+	$(MAKE) -C "$(NT98513_BUILDROOT)" O="$(NT98513_OUTPUT)" BR2_EXTERNAL="$(NT98513_EXTERNAL)" \
+		NT98513_DIVINUS_SOURCE_DIR="$(NT98513_DIVINUS_SOURCE_DIR)" source
+nt98513-wifi: nt98513-wifi-defconfig
+	$(MAKE) -C "$(NT98513_BUILDROOT)" O="$(NT98513_OUTPUT)" BR2_EXTERNAL="$(NT98513_EXTERNAL)" \
+		NT98513_DIVINUS_SOURCE_DIR="$(NT98513_DIVINUS_SOURCE_DIR)" all
+# At this fixed stage, the existing RAM_END guard limits header+payload to 8MiB.
+NT98513_WIFI_IMAGE ?= $(NT98513_OUTPUT)/images/nt98513-wifi.uImage
+nt98513-wifi-image: nt98513-wifi-check-source
+	python3 "$(NT98513_EXTERNAL)/tools/make_ram_kernel_image.py" \
+		--elf "$(NT98513_OUTPUT)/build/linux-custom/vmlinux" \
+		--raw "$(NT98513_OUTPUT)/images/vmlinux.bin" \
+		--timestamp "$(NT98513_RAM_TIMESTAMP)" --staging-address 0x02c00000 \
+		--output "$(NT98513_WIFI_IMAGE)"
+
+# Attach a new prerequisite without rewriting the frozen legacy recipe prefix.
+.PHONY: nt98513-ram-reject-wifi-output
+nt98513-ram-defconfig: nt98513-ram-reject-wifi-output
+nt98513-ram-reject-wifi-output:
+	python3 "$(NT98513_EXTERNAL)/tools/prepare_divinus_source.py" --reject-wifi-output "$(NT98513_OUTPUT)"

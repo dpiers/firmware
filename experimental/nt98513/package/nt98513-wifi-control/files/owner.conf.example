@@ -1,0 +1,5 @@
+interface=wlan0
+country=REPLACE_WITH_ACTUAL_COUNTRY
+ssid=REPLACE_WITH_HEX_SSID
+psk=REPLACE_WITH_64_HEX_PSK
+resolver_owner=exclusive

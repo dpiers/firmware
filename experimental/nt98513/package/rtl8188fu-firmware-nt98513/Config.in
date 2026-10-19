@@ -1,0 +1,5 @@
+config BR2_PACKAGE_RTL8188FU_FIRMWARE_NT98513
+	bool "NT98513 RTL8188FU firmware subset"
+	help
+	  Install only the licensed rtlwifi/rtl8188fufw.bin from pinned
+	  linux-firmware 20240115, with its license and WHENCE notices.

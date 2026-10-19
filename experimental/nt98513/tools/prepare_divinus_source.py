@@ -77,6 +77,7 @@ def check_archive(path, m):
 def check_build_output(build_output, variant):
     """Identify the selected consumer variant before Buildroot can rewrite it."""
     fragments = {
+        'wifi': 'shared-clock.config $(BR2_EXTERNAL_NT98513_PATH)/board/ethernet.config $(BR2_EXTERNAL_NT98513_PATH)/board/usb-host.config $(BR2_EXTERNAL_NT98513_PATH)/board/wifi.config',
         'usb-host': 'shared-clock.config $(BR2_EXTERNAL_NT98513_PATH)/board/ethernet.config $(BR2_EXTERNAL_NT98513_PATH)/board/usb-host.config',
         'owned-input': 'owned-input-network.config',
         'ethernet-owned-input': 'shared-clock.config $(BR2_EXTERNAL_NT98513_PATH)/board/ethernet.config',
@@ -118,6 +119,13 @@ def check_build_output(build_output, variant):
         'BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES': '"$(BR2_EXTERNAL_NT98513_PATH)/board/' + fragments[variant] + '"',
         'BR2_PACKAGE_BUSYBOX_CONFIG_FRAGMENT_FILES': '"' + str(TREE / 'board/owned-input-network-busybox.config') + '"',
     }
+    if variant == 'wifi':
+        expected['BR2_PACKAGE_BUSYBOX_CONFIG_FRAGMENT_FILES'] = '"' + str(TREE / 'board/owned-input-network-busybox.config') + ' ' + str(TREE / 'board/wifi-busybox.config') + '"'
+        for key in ('BR2_PACKAGE_WPA_SUPPLICANT_NT98513', 'BR2_PACKAGE_RTL8188FU_FIRMWARE_NT98513',
+                    'BR2_PACKAGE_NT98513_WIFI_CONTROL', 'BR2_PACKAGE_WIRELESS_REGDB'):
+            expected[key] = 'y'
+        if values.get('BR2_PACKAGE_WPA_SUPPLICANT', 'n') != 'n':
+            raise ValueError('shared supplicant conflicts with isolated Wi-Fi package')
     expected = {key: value.replace('$(BR2_EXTERNAL_NT98513_PATH)', str(TREE))
                 for key, value in expected.items()}
     if any(values.get(key) != value for key, value in expected.items()):
@@ -188,12 +196,24 @@ def prepare(checkout, output_dir):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--checkout', type=Path)
-    parser.add_argument('--output-dir', type=Path, required=True)
+    parser.add_argument('--output-dir', type=Path)
+    parser.add_argument('--reject-wifi-output', type=Path)
     parser.add_argument('--verify-archive', action='store_true')
     parser.add_argument('--build-output', type=Path)
-    parser.add_argument('--build-variant', choices=('owned-input', 'ethernet-owned-input', 'usb-host'), default='owned-input')
+    parser.add_argument('--build-variant', choices=('owned-input', 'ethernet-owned-input', 'usb-host', 'wifi'), default='owned-input')
     args = parser.parse_args()
     try:
+        if args.reject_wifi_output is not None:
+            if args.output_dir or args.checkout or args.verify_archive or args.build_output:
+                raise ValueError('--reject-wifi-output is a standalone guard')
+            config = safe_path(args.reject_wifi_output) / '.config'
+            safe_path(config)
+            if config.exists() and ('/board/wifi.config' in config.read_text() or
+                                    re.search(r'^BR2_PACKAGE_(?:NT98513_WIFI_CONTROL|WPA_SUPPLICANT_NT98513|RTL8188FU_FIRMWARE_NT98513)=y$', config.read_text(), re.M)):
+                raise ValueError('refusing Wi-Fi output reuse by a legacy RAM target')
+            return
+        if args.output_dir is None:
+            raise ValueError('--output-dir is required')
         if args.verify_archive:
             if args.checkout:
                 raise ValueError('--checkout is not used by verification')

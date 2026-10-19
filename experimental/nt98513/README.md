@@ -192,3 +192,11 @@ and the remaining capture and hardware prerequisites.
 default-disabled USB/Ethernet nodes, inherited-state admission and severe
 fail-stop policy. The combined image retains the same manual Divinus consumer.
 It provides no Wi-Fi driver and makes no hardware execution claim.
+
+## Optional manual Wi-Fi station candidate
+
+[WIFI.md](WIFI.md) describes the separate `nt98513-wifi` target, pinned
+RTL8188FU firmware and static WPA2 userspace, private owner-controlled
+lifecycle, signed regulatory database and full-image 8 MiB guard. This
+variant preserves every earlier output and keeps USB/Ethernet disabled in
+DT. Network startup remains an explicit owner action after hardware admission.

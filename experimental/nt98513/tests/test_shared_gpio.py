@@ -103,6 +103,11 @@ class FinalSource(unittest.TestCase):
             # Manifest records the accepted GPIO baseline; Ethernet appends new integration.
             if r['path'] in ('targets.mk', 'external.mk'):
                 data = data.split(b'# Optional offline Ethernet variant; existing variants above remain unchanged.\n')[0]
+            if r['path'] == 'Config.in':
+                # Wi-Fi adds registrations; the accepted prefix hash is unchanged.
+                marker = b'# Optional manual Wi-Fi packages; existing registrations above remain unchanged.\n'
+                self.assertEqual(data.count(marker), 1)
+                data = data.split(marker)[0]
             self.assertEqual(digest(data), r['sha256'], r['path'])
         for r in MANIFEST['unchanged_final_imports']:
             self.assertEqual(digest(final[r['kernel']]), r['sha256'])
