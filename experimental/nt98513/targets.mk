@@ -127,3 +127,33 @@ nt98513-wifi-image: nt98513-wifi-check-source
 nt98513-ram-defconfig: nt98513-ram-reject-wifi-output
 nt98513-ram-reject-wifi-output:
 	python3 "$(NT98513_EXTERNAL)/tools/prepare_divinus_source.py" --reject-wifi-output "$(NT98513_OUTPUT)"
+
+# Default-disabled SD host candidate with its own output and preserved Wi-Fi.
+.PHONY: nt98513-mmc-check-source nt98513-mmc-defconfig nt98513-mmc-source nt98513-mmc nt98513-mmc-image
+nt98513-mmc-check-source:
+	python3 "$(NT98513_EXTERNAL)/board/check-mmc-output.py" "$(NT98513_OUTPUT)"
+	python3 "$(NT98513_EXTERNAL)/tools/prepare_divinus_source.py" \
+		--verify-archive --output-dir "$(NT98513_DIVINUS_SOURCE_DIR)" \
+		--build-output "$(NT98513_OUTPUT)" --build-variant mmc
+nt98513-mmc-defconfig: nt98513-mmc-check-source
+	$(MAKE) -C "$(NT98513_BUILDROOT)" O="$(NT98513_OUTPUT)" BR2_EXTERNAL="$(NT98513_EXTERNAL)" \
+		NT98513_DIVINUS_SOURCE_DIR="$(NT98513_DIVINUS_SOURCE_DIR)" nt98513_mmc_defconfig
+nt98513-mmc-source: nt98513-mmc-defconfig
+	$(MAKE) -C "$(NT98513_BUILDROOT)" O="$(NT98513_OUTPUT)" BR2_EXTERNAL="$(NT98513_EXTERNAL)" \
+		NT98513_DIVINUS_SOURCE_DIR="$(NT98513_DIVINUS_SOURCE_DIR)" source
+nt98513-mmc: nt98513-mmc-defconfig
+	$(MAKE) -C "$(NT98513_BUILDROOT)" O="$(NT98513_OUTPUT)" BR2_EXTERNAL="$(NT98513_EXTERNAL)" \
+		NT98513_DIVINUS_SOURCE_DIR="$(NT98513_DIVINUS_SOURCE_DIR)" all
+NT98513_MMC_IMAGE ?= $(NT98513_OUTPUT)/images/nt98513-mmc.uImage
+nt98513-mmc-image: nt98513-mmc-check-source
+	python3 "$(NT98513_EXTERNAL)/tools/make_ram_kernel_image.py" \
+		--elf "$(NT98513_OUTPUT)/build/linux-custom/vmlinux" \
+		--raw "$(NT98513_OUTPUT)/images/vmlinux.bin" \
+		--timestamp "$(NT98513_RAM_TIMESTAMP)" --staging-address 0x02c00000 \
+		--output "$(NT98513_MMC_IMAGE)"
+
+# Keep the legacy generic packager from writing an MMC output as another image.
+.PHONY: nt98513-ram-reject-mmc-output
+nt98513-ram-defconfig nt98513-ram-image: nt98513-ram-reject-mmc-output
+nt98513-ram-reject-mmc-output:
+	python3 "$(NT98513_EXTERNAL)/board/check-mmc-output.py" --reject-mmc "$(NT98513_OUTPUT)"

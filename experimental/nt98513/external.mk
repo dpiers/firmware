@@ -34,3 +34,12 @@ endef
 LINUX_POST_CONFIGURE_HOOKS += NT98513_CHECK_WIFI_KERNEL
 LINUX_PRE_BUILD_HOOKS += NT98513_CHECK_WIFI_KERNEL
 endif
+
+# MMC adds a resolved board/host check after the inherited Wi-Fi contract.
+ifneq ($(filter %/mmc.config,$(call qstrip,$(BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES))),)
+define NT98513_CHECK_MMC_KERNEL
+	sh "$(BR2_EXTERNAL_NT98513_PATH)/tools/check_mmc_kernel.sh" "$(@D)"
+endef
+LINUX_POST_CONFIGURE_HOOKS += NT98513_CHECK_MMC_KERNEL
+LINUX_PRE_BUILD_HOOKS += NT98513_CHECK_MMC_KERNEL
+endif
