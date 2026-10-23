@@ -1,0 +1,472 @@
+--- /dev/null
++++ b/Documentation/devicetree/bindings/clock/openipc,nt98513-shared-clock-v3.yaml
+@@ -0,0 +1,41 @@
++# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/clock/openipc,nt98513-shared-clock-v3.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++title: NT98513 shared clock owner with qualified MMC lifetimes
++maintainers:
++  - Daniel Piers <dpiers@users.noreply.github.com>
++description: |
++  The permanent CC-bank supplier owns arbitration. This node extends the v2
++  owner to exactly five sparse CG words without a second map or CC owner.
++  CCF client1 remains the Ethernet activation clock with unknown rate. MMC0/1
++  are explicit sleepable clients with independent admission and sticky faults;
++  they are not additional mutable CCF clocks. Admission requires inherited
++  parent0, gate and prepare, plus board-qualified physical ownership and stable
++  nominal 192 MHz source. The driver never reparents or initializes power/pads.
++  Controller-idle qualification is the MMC host's obligation before mutation.
++properties:
++  compatible:
++    const: openipc,nt98513-shared-clock-v3
++  reg:
++    items:
++      - description: Gate C0020074, four bytes
++      - description: Preparation C0020084, four bytes
++      - description: Parent mux C0020020, four bytes
++      - description: Divider C002003C, four bytes
++      - description: Phase C00200B0, four bytes
++  reg-names:
++    items:
++      - const: gate
++      - const: prepare
++      - const: mux
++      - const: divider
++      - const: phase
++  openipc,cc-bank:
++    $ref: /schemas/types.yaml#/definitions/phandle
++    description: The same permanent core1 CC-bank supplier used by v2 and GPIO
++  '#clock-cells':
++    const: 1
++required: [compatible, reg, reg-names, 'openipc,cc-bank', '#clock-cells']
++additionalProperties: false
+--- a/drivers/clk/nt98513-shared/Makefile
++++ b/drivers/clk/nt98513-shared/Makefile
+@@ -1,5 +1,5 @@
+ # SPDX-License-Identifier: GPL-2.0-only
+ ccflags-y += -I$(src)/include
+ obj-$(CONFIG_NT98513_SHARED_CLOCK) += nt98513-shared-clock.o
+-nt98513-shared-clock-y := core/nt98513_clock_txn.o driver/nt98513_clock_owner.o driver/nt98513_eth_clock.o
++nt98513-shared-clock-y := core/nt98513_clock_txn.o driver/nt98513_clock_owner.o driver/nt98513_eth_clock.o driver/nt98513_mmc_clock.o
+ obj-$(CONFIG_NT98513_WATCHDOG_SHARED) += driver/nt98513_wdt_shared.o
+--- a/drivers/clk/nt98513-shared/driver/nt98513_clock_owner.c
++++ b/drivers/clk/nt98513-shared/driver/nt98513_clock_owner.c
+@@ -88,7 +88,8 @@
+   return ERR_PTR(-EINVAL);
+  node = of_parse_phandle(consumer->of_node, "openipc,clock-owner", 0);
+  if (!node || !of_device_is_available(node) ||
+-     !of_device_is_compatible(node, "openipc,nt98513-shared-clock-v2")) {
++     (!of_device_is_compatible(node, "openipc,nt98513-shared-clock-v2") &&
++      !of_device_is_compatible(node, "openipc,nt98513-shared-clock-v3"))) {
+   of_node_put(node);
+   return ERR_PTR(-EINVAL);
+  }
+@@ -112,33 +113,37 @@
+ }
+ static int nt_owner_probe(struct platform_device *pdev)
+ {
+- static const char * const names[] = { "gate", "prepare" };
+- static const resource_size_t starts[] = { 0xc0020074, 0xc0020084 };
+- static const resource_size_t sizes[] = { 4, 4 };
+- struct resource *resources[2];
++ static const char * const names[] = { "gate", "prepare", "mux", "divider", "phase" };
++ static const resource_size_t starts[] = { 0xc0020074, 0xc0020084, 0xc0020020, 0xc002003c, 0xc00200b0 };
++ struct resource *resources[5];
+  struct nt98513_clock_owner *o;
+- void __iomem *mapped[2];
++ void __iomem *mapped[5];
+  int error = -EINVAL;
+- unsigned i;
++ unsigned i, count;
++ bool v3 = of_device_is_compatible(pdev->dev.of_node,
++                                    "openipc,nt98513-shared-clock-v3");
+  mutex_lock(&nt_registry_lock);
+  if (nt_reservation) { mutex_unlock(&nt_registry_lock); return -EBUSY; }
+  nt_reservation = &pdev->dev;
+  mutex_unlock(&nt_registry_lock);
+- if (pdev->num_resources != 2) goto fail;
+- for (i = 0; i < 2; i++) {
++ count = v3 ? 5 : 2;
++ if (pdev->num_resources != count) goto fail;
++ for (i = 0; i < count; i++) {
+   resources[i] = platform_get_resource_byname(pdev, IORESOURCE_MEM, names[i]);
+   if (!resources[i] || resources[i]->start != starts[i] ||
+-      resource_size(resources[i]) != sizes[i]) goto fail;
++      resource_size(resources[i]) != 4) goto fail;
+  }
+  o = devm_kzalloc(&pdev->dev, sizeof(*o), GFP_KERNEL);
+  if (!o) { error = -ENOMEM; goto fail; }
+  mutex_init(&o->lock);
+  o->dev = &pdev->dev;
+- for (i = 0; i < 2; i++) {
++ for (i = 0; i < count; i++) {
+   mapped[i] = devm_ioremap_resource(&pdev->dev, resources[i]);
+   if (IS_ERR(mapped[i])) { error = PTR_ERR(mapped[i]); goto fail; }
+  }
+  o->gate = mapped[0]; o->prepare = mapped[1];
++ o->mmc_v3 = v3;
++ if (v3) { o->mux = mapped[2]; o->divider = mapped[3]; o->phase = mapped[4]; }
+  o->bank = devm_nt98513_cc_bank_get(&pdev->dev);
+  if (IS_ERR(o->bank)) { error = PTR_ERR(o->bank); goto fail; }
+  platform_set_drvdata(pdev, o);
+@@ -160,7 +165,8 @@
+  return error;
+ }
+ static const struct of_device_id nt_owner_match[] = {
+- { .compatible = "openipc,nt98513-shared-clock-v2" }, { }
++ { .compatible = "openipc,nt98513-shared-clock-v2" },
++ { .compatible = "openipc,nt98513-shared-clock-v3" }, { }
+ };
+ static struct platform_driver nt_owner_driver = {
+  .probe = nt_owner_probe,
+--- /dev/null
++++ b/drivers/clk/nt98513-shared/driver/nt98513_mmc_clock.c
+@@ -0,0 +1,295 @@
++// SPDX-License-Identifier: GPL-2.0-only
++#include <linux/delay.h>
++#include <linux/device.h>
++#include <linux/err.h>
++#include <linux/io.h>
++#include <linux/slab.h>
++#include <linux/soc/nt98513_mmc_clock.h>
++#include "nt98513_clock_private.h"
++
++/* No second CG/CC owner: every operation holds the permanent owner's mutex.
++ * Each hardware transaction also uses the existing CC-bank resource2. Claims
++ * serialize Linux clients only; firmware/DMA quiescence is a board obligation.
++ */
++struct nt98513_mmc_clock {
++ struct nt98513_clock_owner *owner;
++ unsigned index;
++};
++enum nt_mmc_reg { MMC_GATE, MMC_PREPARE, MMC_MUX, MMC_DIVIDER, MMC_PHASE };
++
++static struct nt_mmc_state *mmc_state(struct nt98513_mmc_clock *c)
++{
++ return &c->owner->mmc[c->index];
++}
++static void __iomem *mmc_reg(struct nt98513_clock_owner *o, unsigned r)
++{
++ switch (r) {
++ case MMC_GATE: return o->gate;
++ case MMC_PREPARE: return o->prepare;
++ case MMC_MUX: return o->mux;
++ case MMC_DIVIDER: return o->divider;
++ default: return o->phase;
++ }
++}
++static unsigned mmc_mask(struct nt98513_mmc_clock *c, unsigned r)
++{
++ switch (r) {
++ case MMC_GATE:
++ case MMC_PREPARE: return 1U << (2 + c->index);
++ case MMC_MUX: return 3U << (c->index ? 8 : 4);
++ case MMC_DIVIDER: return 2047U << (c->index ? 16 : 0);
++ default: return 1U << (20 + c->index);
++ }
++}
++static int mmc_latch(struct nt98513_mmc_clock *c, int error)
++{
++ struct nt_mmc_state *s = mmc_state(c);
++ if (error && !s->fault) s->fault = error;
++ return error;
++}
++static int mmc_health(struct nt98513_mmc_clock *c)
++{
++ int error = mmc_state(c)->fault;
++ return error ? error : nt98513_clock_fault(c->owner);
++}
++/* Called only while resource2 is granted. Unowned fields may legitimately
++ * change between transactions; owned fields must equal our last verified state.
++ */
++static int mmc_validate(struct nt98513_mmc_clock *c, bool admission)
++{
++ struct nt_mmc_state *s = mmc_state(c);
++ unsigned r, v, mask;
++ for (r = 0; r < 5; r++) {
++  mask = mmc_mask(c, r);
++  v = readl(mmc_reg(c->owner, r));
++  if (v == ~0U) return -EIO;
++  if (r == MMC_MUX && (v & mask)) return -EIO; /* fixed192m only */
++  if (admission) {
++   if ((r == MMC_GATE || r == MMC_PREPARE) && !(v & mask)) return -EIO;
++   s->expected[r] = v & mask;
++  } else if ((v & mask) != s->expected[r]) {
++   return -EIO;
++  }
++ }
++ return 0;
++}
++static int mmc_begin(struct nt98513_mmc_clock *c, bool admission)
++{
++ struct nt98513_cc_bank *bank = c->owner->bank;
++ int error = mmc_health(c);
++ if (error) return mmc_latch(c, error);
++ error = nt_cc_enter(bank, 2);
++ if (error) return mmc_latch(c, error);
++ error = nt_cc_acquire_locked(bank, 2);
++ if (error) {
++  /* The bank deliberately does not release an uncertain acquisition. */
++  nt_cc_leave(bank);
++  return mmc_latch(c, error);
++ }
++ error = mmc_validate(c, admission);
++ if (error) {
++  int released = nt_cc_release_locked(bank, 2);
++  nt_cc_leave(bank);
++  return mmc_latch(c, error ? error : released);
++ }
++ return 0;
++}
++static int mmc_end(struct nt98513_mmc_clock *c, int error)
++{
++ int released = nt_cc_release_locked(c->owner->bank, 2);
++ nt_cc_leave(c->owner->bank);
++ return mmc_latch(c, error ? error : released);
++}
++static int mmc_update(struct nt98513_mmc_clock *c, unsigned reg, unsigned bits)
++{
++ struct nt_mmc_state *s = mmc_state(c);
++ unsigned mask = mmc_mask(c, reg);
++ unsigned old = readl(mmc_reg(c->owner, reg)), value;
++ if (old == ~0U || (old & mask) != s->expected[reg]) return -EIO;
++ value = (old & ~mask) | (bits & mask);
++ if (value == ~0U) return -EIO;
++ if (old != value) writel(value, mmc_reg(c->owner, reg));
++ /* Verify the full word while arbitrated, including preserved sibling bits. */
++ if (readl(mmc_reg(c->owner, reg)) != value) return -EIO;
++ s->expected[reg] = value & mask;
++ return 0;
++}
++static int mmc_set(struct nt98513_mmc_clock *c, unsigned r, unsigned bits)
++{
++ int error = mmc_begin(c, false);
++ if (error) return error;
++ return mmc_end(c, mmc_update(c, r, bits));
++}
++static int mmc_rate_value(unsigned requested, unsigned *encoded, unsigned *actual)
++{
++ unsigned divisor;
++ if (requested < 400000 || requested > 12000000 || !actual) return -EINVAL;
++ divisor = (192000000U + requested - 1) / requested;
++ *encoded = divisor - 1;
++ *actual = (192000000U + divisor - 1) / divisor;
++ return 0;
++}
++static void mmc_managed_release(void *p)
++{
++ /* No blind gating/reset. An unsafe initialized claim remains unavailable. */
++ nt98513_mmc_clock_release(p);
++}
++struct nt98513_mmc_clock *devm_nt98513_mmc_clock_get(struct device *dev,
++                                                 unsigned int index)
++{
++ struct nt98513_clock_owner *o;
++ struct nt98513_mmc_clock *c;
++ int error;
++ if (index > 1) return ERR_PTR(-EINVAL);
++ o = devm_nt98513_clock_owner_get(dev);
++ if (IS_ERR(o)) return ERR_PTR(PTR_ERR(o));
++ if (!o->mmc_v3) return ERR_PTR(-EINVAL);
++ c = devm_kzalloc(dev, sizeof(*c), GFP_KERNEL);
++ if (!c) return ERR_PTR(-ENOMEM);
++ c->owner = o;
++ c->index = index;
++ error = devm_add_action_or_reset(dev, mmc_managed_release, c);
++ return error ? ERR_PTR(error) : c;
++}
++int nt98513_mmc_clock_admit(struct nt98513_mmc_clock *c)
++{
++ struct nt_mmc_state *s;
++ int error;
++ if (!c) return -EINVAL;
++ might_sleep();
++ mutex_lock(&c->owner->lock);
++ s = mmc_state(c);
++ if (s->claim || s->retired) { error = -EBUSY; goto out; }
++ error = mmc_health(c);
++ if (error) goto out;
++ s->claim = c;
++ error = mmc_begin(c, true);
++ if (!error) error = mmc_end(c, 0);
++ if (!error) s->admitted = true;
++out:
++ mutex_unlock(&c->owner->lock);
++ return error;
++}
++static int mmc_change_rate(struct nt98513_mmc_clock *c, unsigned requested,
++                           unsigned *actual_hz, bool first)
++{
++ struct nt_mmc_state *s;
++ unsigned encoded, actual;
++ int error;
++ if (!c || !actual_hz) return -EINVAL;
++ error = mmc_rate_value(requested, &encoded, &actual);
++ if (error) return error;
++ might_sleep();
++ mutex_lock(&c->owner->lock);
++ s = mmc_state(c);
++ if (s->claim != c || !s->admitted || s->retired ||
++     (first ? s->initialized : !s->initialized)) { error = -EINVAL; goto out; }
++ error = mmc_health(c);
++ if (error) goto out;
++ if (!first && s->on && s->rate == actual) {
++  error = mmc_begin(c, false);
++  if (!error) error = mmc_end(c, 0);
++  goto done;
++ }
++ /* Mark initialized before the first possible mutation, even if it fails. */
++ s->initialized = true;
++ if (first || s->on) {
++  error = mmc_set(c, MMC_GATE, 0);
++  if (error) goto out;
++  s->on = false;
++ }
++ error = mmc_set(c, MMC_DIVIDER, encoded << (c->index ? 16 : 0));
++ if (error) goto out;
++ if (first) {
++  if (!c->index) {
++   error = mmc_set(c, MMC_PHASE, 1U << 20);
++   if (error) goto out;
++  }
++  /* Stock's two pulse delays have different arbitration scope. The owner
++   * mutex spans both; WDT/Ethernet cannot interleave the prepare lifetime.
++   */
++  error = mmc_set(c, MMC_PREPARE, 0);
++  if (error) goto out;
++  udelay(10); /* outside bank */
++  error = mmc_begin(c, false);
++  if (error) goto out;
++  error = mmc_update(c, MMC_PREPARE, mmc_mask(c, MMC_PREPARE));
++  if (!error) udelay(10); /* still granted */
++  error = mmc_end(c, error);
++  if (error) goto out;
++ }
++ error = mmc_set(c, MMC_GATE, mmc_mask(c, MMC_GATE));
++ if (error) goto out;
++ s->on = true;
++ s->rate = actual;
++done:
++ if (!error) *actual_hz = actual;
++out:
++ mutex_unlock(&c->owner->lock);
++ return error;
++}
++int nt98513_mmc_clock_start(struct nt98513_mmc_clock *c, unsigned requested,
++                          unsigned *actual)
++{
++ return mmc_change_rate(c, requested, actual, true);
++}
++int nt98513_mmc_clock_rate(struct nt98513_mmc_clock *c, unsigned requested,
++                         unsigned *actual)
++{
++ return mmc_change_rate(c, requested, actual, false);
++}
++int nt98513_mmc_clock_stop(struct nt98513_mmc_clock *c)
++{
++ struct nt_mmc_state *s;
++ int error;
++ if (!c) return -EINVAL;
++ might_sleep();
++ mutex_lock(&c->owner->lock);
++ s = mmc_state(c);
++ if (s->claim != c || !s->initialized || s->retired) error = -EINVAL;
++ else {
++  error = mmc_set(c, MMC_GATE, 0);
++  if (!error) s->on = false;
++ }
++ mutex_unlock(&c->owner->lock);
++ return error;
++}
++int nt98513_mmc_clock_fault(struct nt98513_mmc_clock *c)
++{
++ int error;
++ if (!c) return -EINVAL;
++ might_sleep();
++ mutex_lock(&c->owner->lock);
++ error = mmc_health(c);
++ mutex_unlock(&c->owner->lock);
++ return error;
++}
++int nt98513_mmc_clock_release(struct nt98513_mmc_clock *c)
++{
++ struct nt_mmc_state *s;
++ int error = 0;
++ if (!c) return -EINVAL;
++ might_sleep();
++ mutex_lock(&c->owner->lock);
++ s = mmc_state(c);
++ if (s->claim != c) goto out;
++ if (!s->initialized) {
++  /* No CG write has occurred; any admission fault remains sticky in s. */
++  s->claim = NULL;
++  s->admitted = false;
++  goto out;
++ }
++ error = mmc_health(c);
++ if (error) goto out;
++ if (s->on) { error = -EBUSY; goto out; }
++ error = mmc_begin(c, false);
++ if (!error) error = mmc_end(c, 0);
++ if (!error) {
++  s->retired = true;
++  s->claim = NULL;
++  s->admitted = false;
++ }
++out:
++ mutex_unlock(&c->owner->lock);
++ return error;
++}
+--- a/drivers/clk/nt98513-shared/include/nt98513_clock_private.h
++++ b/drivers/clk/nt98513-shared/include/nt98513_clock_private.h
+@@ -7,10 +7,20 @@
+ #include "nt98513_clock_owner.h"
+ #include "nt98513_clock_txn.h"
+ #include <linux/soc/nt98513_cc_bank.h>
++struct nt98513_mmc_clock;
++struct nt_mmc_state {
++ struct nt98513_mmc_clock *claim;
++ unsigned expected[5];
++ unsigned rate;
++ int fault;
++ bool admitted, initialized, on, retired;
++};
+ #define NT_CLOCK_READY (1U << 2)
+ struct nt98513_clock_owner {
+  struct device *dev;
+- void __iomem *gate, *prepare;
++ void __iomem *gate, *prepare, *mux, *divider, *phase;
++ bool mmc_v3;
++ struct nt_mmc_state mmc[2];
+  struct nt98513_cc_bank *bank;
+  struct mutex lock;
+  struct nt_cg_state state;
+--- /dev/null
++++ b/include/linux/soc/nt98513_mmc_clock.h
+@@ -0,0 +1,24 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef NT98513_MMC_CLOCK_H
++#define NT98513_MMC_CLOCK_H
++struct device;
++struct nt98513_mmc_clock;
++/* All operations sleep. No controller access is permitted before admit succeeds.
++ * The caller proves exclusive physical ownership, a stable nominal 192 MHz
++ * source, and controller/DMA idle before start/rate/stop. No operation reparents.
++ * Rates are nominal software values, not physical frequency measurements.
++ */
++struct nt98513_mmc_clock *devm_nt98513_mmc_clock_get(struct device *dev,
++                                                 unsigned int index);
++int nt98513_mmc_clock_admit(struct nt98513_mmc_clock *clock);
++int nt98513_mmc_clock_start(struct nt98513_mmc_clock *clock,
++                          unsigned int requested_hz, unsigned int *actual_hz);
++int nt98513_mmc_clock_rate(struct nt98513_mmc_clock *clock,
++                         unsigned int requested_hz, unsigned int *actual_hz);
++int nt98513_mmc_clock_stop(struct nt98513_mmc_clock *clock);
++int nt98513_mmc_clock_fault(struct nt98513_mmc_clock *clock);
++/* Untouched admission may be dropped; initialized claims retire only verified
++ * OFF. Failure/uncertainty leaves the instance unavailable for this boot.
++ */
++int nt98513_mmc_clock_release(struct nt98513_mmc_clock *clock);
++#endif

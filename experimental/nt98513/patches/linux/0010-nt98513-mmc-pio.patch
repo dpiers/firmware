@@ -1,0 +1,1303 @@
+--- /dev/null
++++ b/Documentation/devicetree/bindings/mmc/openipc,nt98513-mmc-pio.yaml
+@@ -0,0 +1,68 @@
++# SPDX-License-Identifier: GPL-2.0-only OR BSD-2-Clause
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/mmc/openipc,nt98513-mmc-pio.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++title: Experimental NT98513 inherited-board native SD PIO host
++maintainers:
++  - OpenIPC Developers <dev@openipc.org>
++description: |
++  Two declared controller instances, no proven physical socket mapping.
++  Native SD only, 1-bit 3.3V, single blocks up to512 bytes, nominal400kHz..12MHz.
++  The permanent shared-clock-v3 supplier owns all CG and CC arbitration.
++  No pad/power initialization or DMA. Deployment assertions require separately
++  qualified physical ownership, previous DMA quiescence, routing and electrical
++  readiness; neither booleans nor readable idle bits prove those facts.
++properties:
++  compatible:
++    const: openipc,nt98513-mmc-pio-v1
++  reg:
++    maxItems: 1
++  reg-names:
++    const: host
++  interrupts:
++    maxItems: 1
++  interrupt-names:
++    const: host
++  openipc,controller-index:
++    $ref: /schemas/types.yaml#/definitions/uint32
++    enum: [0, 1]
++  openipc,clock-owner:
++    $ref: /schemas/types.yaml#/definitions/phandle
++    description: Permanent shared-clock-v3 owner, also referencing the sole CC bank.
++  bus-width:
++    const: 1
++  max-frequency:
++    const: 12000000
++  openipc,linux-exclusive-ownership:
++    type: boolean
++    description: Previous controller/IRQ/DMA masters quiesced and excluded for the lifetime.
++  openipc,qualified-inherited-board-state:
++    type: boolean
++    description: Independently qualified card power, 3.3V pads, drive and route for this instance.
++  openipc,stable-192mhz-parent:
++    type: boolean
++    description: Parent0 is stable nominal192MHz; selected clock fields have no competing writer.
++  status: true
++required:
++  - compatible
++  - reg
++  - reg-names
++  - interrupts
++  - interrupt-names
++  - openipc,controller-index
++  - openipc,clock-owner
++  - bus-width
++  - max-frequency
++allOf:
++  - if:
++      properties:
++        status:
++          const: disabled
++      required: [status]
++    else:
++      required:
++        - openipc,linux-exclusive-ownership
++        - openipc,qualified-inherited-board-state
++        - openipc,stable-192mhz-parent
++additionalProperties: false
+--- a/arch/mips/boot/dts/nt98513/Makefile
++++ b/arch/mips/boot/dts/nt98513/Makefile
+@@ -1,5 +1,7 @@
+ include $(srctree)/arch/mips/nt98513/clock-config-guard.mk
+-ifeq ($(CONFIG_NT98513_USB_HOST_BOARD),y)
++ifeq ($(CONFIG_NT98513_MMC_BOARD),y)
++dtb-$(CONFIG_MACH_NT98513) += nt98513-mmc.dtb
++else ifeq ($(CONFIG_NT98513_USB_HOST_BOARD),y)
+ dtb-$(CONFIG_MACH_NT98513) += nt98513-usb-host.dtb
+ else ifeq ($(CONFIG_NT98513_ETHERNET_BOARD),y)
+ dtb-$(CONFIG_MACH_NT98513) += nt98513-ethernet.dtb
+--- /dev/null
++++ b/arch/mips/boot/dts/nt98513/nt98513-mmc.dts
+@@ -0,0 +1,39 @@
++// SPDX-License-Identifier: GPL-2.0-only
++#include "nt98513-usb-host.dts"
++
++&clock_owner {
++ compatible = "openipc,nt98513-shared-clock-v3";
++ reg = <0xc0020074 4>, <0xc0020084 4>, <0xc0020020 4>,
++       <0xc002003c 4>, <0xc00200b0 4>;
++ reg-names = "gate", "prepare", "mux", "divider", "phase";
++};
++
++/ {
++ mmc0: mmc@c0420000 {
++  compatible = "openipc,nt98513-mmc-pio-v1";
++  reg = <0xc0420000 0x200>;
++  reg-names = "host";
++  interrupt-parent = <&intc>;
++  interrupts = <30>;
++  interrupt-names = "host";
++  openipc,controller-index = <0>;
++  openipc,clock-owner = <&clock_owner>;
++  bus-width = <1>;
++  max-frequency = <12000000>;
++  /* Neither this node nor its address establishes the physical socket. */
++  status = "disabled";
++ };
++ mmc1: mmc@c0500000 {
++  compatible = "openipc,nt98513-mmc-pio-v1";
++  reg = <0xc0500000 0x200>;
++  reg-names = "host";
++  interrupt-parent = <&intc>;
++  interrupts = <31>;
++  interrupt-names = "host";
++  openipc,controller-index = <1>;
++  openipc,clock-owner = <&clock_owner>;
++  bus-width = <1>;
++  max-frequency = <12000000>;
++  status = "disabled";
++ };
++};
+--- a/arch/mips/nt98513/Kconfig.shared-clock
++++ b/arch/mips/nt98513/Kconfig.shared-clock
+@@ -37,3 +37,12 @@
+    Add a disabled inherited-state USB host node alongside disabled Ethernet.
+    Control/bulk only. A failed halt after DMA publication panics before any
+    DMA-buffer reclamation. No physical USB or Wi-Fi acceptance is implied.
++
++config NT98513_MMC_BOARD
++ bool "Experimental NT98513 board with disabled SD PIO hosts"
++ depends on NT98513_USB_HOST_BOARD && MMC_NT98513
++ default n
++ help
++   Add two disabled native SD PIO nodes using the same shared clock owner.
++   Card power/pads and physical exclusive ownership require independent
++   qualification. No socket mapping, electrical timing or storage test is implied.
+--- a/arch/mips/nt98513/clock-config-guard.mk
++++ b/arch/mips/nt98513/clock-config-guard.mk
+@@ -72,3 +72,44 @@
+ $(error NT98513 shared-clock configuration requires CONFIG_PINCTRL=n)
+ endif
+ endif
++
++# MMC is additive to the accepted USB/Wi-Fi board, not an alternative supplier.
++nt98513-mmc-request := $(filter-out n,$(CONFIG_NT98513_MMC_BOARD) $(CONFIG_MMC_NT98513))
++ifneq ($(strip $(nt98513-mmc-request)),)
++ifneq ($(CONFIG_MACH_NT98513),y)
++$(error NT98513 MMC configuration requires CONFIG_MACH_NT98513=y)
++endif
++ifneq ($(CONFIG_NT98513_MMC_BOARD),y)
++$(error NT98513 MMC configuration requires CONFIG_NT98513_MMC_BOARD=y)
++endif
++ifneq ($(CONFIG_MMC_NT98513),y)
++$(error NT98513 MMC configuration requires CONFIG_MMC_NT98513=y)
++endif
++ifneq ($(CONFIG_MMC),y)
++$(error NT98513 MMC configuration requires CONFIG_MMC=y)
++endif
++ifneq ($(CONFIG_MMC_BLOCK),y)
++$(error NT98513 MMC configuration requires CONFIG_MMC_BLOCK=y)
++endif
++ifneq ($(CONFIG_NT98513_USB_HOST_BOARD),y)
++$(error NT98513 MMC configuration requires CONFIG_NT98513_USB_HOST_BOARD=y)
++endif
++ifneq ($(CONFIG_NT98513_SHARED_CLOCK),y)
++$(error NT98513 MMC configuration requires CONFIG_NT98513_SHARED_CLOCK=y)
++endif
++ifneq ($(CONFIG_NT98513_CC_BANK),y)
++$(error NT98513 MMC configuration requires CONFIG_NT98513_CC_BANK=y)
++endif
++ifneq ($(CONFIG_OF),y)
++$(error NT98513 MMC configuration requires CONFIG_OF=y)
++endif
++ifneq ($(filter-out n,$(CONFIG_PM)),)
++$(error NT98513 MMC configuration requires CONFIG_PM=n)
++endif
++ifneq ($(filter-out n,$(CONFIG_SMP)),)
++$(error NT98513 MMC configuration requires CONFIG_SMP=n)
++endif
++ifneq ($(filter-out n,$(CONFIG_OF_DYNAMIC)),)
++$(error NT98513 MMC configuration requires CONFIG_OF_DYNAMIC=n)
++endif
++endif
+--- a/drivers/mmc/host/Kconfig
++++ b/drivers/mmc/host/Kconfig
+@@ -1071,3 +1071,15 @@
+ 	  module will be called litex_mmc.
+ 
+ 	  If unsure, say N.
++
++config MMC_NT98513
++ bool "Experimental NT98513 native SD single-block PIO host"
++ depends on MACH_NT98513 && OF && MMC=y && MMC_BLOCK=y
++ depends on NT98513_SHARED_CLOCK && NT98513_CC_BANK
++ depends on !PM && !SMP && !OF_DYNAMIC
++ default n
++ help
++   Permanent native SD host, 1-bit 3.3-V and at most nominal12MHz.
++   Requires qualified inherited power/pads, stable parent and exclusive
++   ownership. No DMA, SDIO/eMMC, tuning or voltage switching. Both supplied
++   board nodes stay disabled; software assertions do not prove readiness.
+--- a/drivers/mmc/host/Makefile
++++ b/drivers/mmc/host/Makefile
+@@ -108,3 +108,5 @@
+ 
+ obj-$(CONFIG_MMC_SDHCI_XENON)	+= sdhci-xenon-driver.o
+ sdhci-xenon-driver-y		+= sdhci-xenon.o sdhci-xenon-phy.o
++
++obj-$(CONFIG_MMC_NT98513) += nt98513/
+--- /dev/null
++++ b/drivers/mmc/host/nt98513/Makefile
+@@ -0,0 +1,3 @@
++# SPDX-License-Identifier: GPL-2.0-only
++obj-$(CONFIG_MMC_NT98513) += nt98513-mmc.o
++nt98513-mmc-y := nt98513-mmc-core.o nt98513-mmc-driver.o
+--- /dev/null
++++ b/drivers/mmc/host/nt98513/nt98513-mmc-core.c
+@@ -0,0 +1,511 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/* Authored NT98513 SD PIO engine. No DMA, pad or shared-clock register access. */
++#ifdef __KERNEL__
++#include <linux/errno.h>
++#include <linux/math64.h>
++#include <linux/string.h>
++#else
++#include <errno.h>
++#include <string.h>
++#endif
++#include "nt98513-mmc.h"
++
++#define NT_STATUS_MASK 0xffU
++#define NT_READ_FAULT 0x80000000U
++#define NT_COMMAND_US 1000000ULL
++#define NT_DATA_US 10000000ULL
++#define NT_RESET_US 20000ULL
++
++static int nt_read(struct nt_mmc *c, unsigned reg, unsigned *value)
++{
++	*value = c->ops->read(c->context, reg);
++	if (*value == ~0U) {
++		c->fault = -EIO;
++		return -EIO;
++	}
++	return 0;
++}
++
++static void nt_write(struct nt_mmc *c, unsigned reg, unsigned value)
++{
++	c->ops->write(c->context, reg, value);
++}
++
++static int nt_poll_clear(struct nt_mmc *c, unsigned reg, unsigned mask,
++			 unsigned long long deadline)
++{
++	unsigned value;
++	for (;;) {
++		if (c->ops->now_us(c->context) >= deadline)
++			return -ETIMEDOUT;
++		if (nt_read(c, reg, &value))
++			return -EIO;
++		if (!(value & mask))
++			return 0;
++		if (c->ops->now_us(c->context) >= deadline)
++			return -ETIMEDOUT;
++		c->ops->relax(c->context);
++	}
++}
++
++void nt_mmc_init(struct nt_mmc *c, const struct nt_mmc_ops *ops, void *context)
++{
++	memset(c, 0, sizeof(*c));
++	c->ops = ops;
++	c->context = context;
++}
++
++int nt_mmc_idle_locked(struct nt_mmc *c)
++{
++	unsigned command, transfer;
++	if (nt_read(c, 0, &command) || nt_read(c, 0x10c, &transfer))
++		return -EIO;
++	return ((command & 0x600) || (transfer & 3)) ? -EBUSY : 0;
++}
++
++int nt_mmc_admit(struct nt_mmc *c)
++{
++	int error;
++	c->ops->lock(c->context);
++	error = nt_mmc_idle_locked(c);
++	if (!error)
++		c->admitted = 1;
++	c->ops->unlock(c->context);
++	return error;
++}
++
++void nt_mmc_irq_off(struct nt_mmc *c)
++{
++	unsigned long flags = c->ops->irq_lock(c->context);
++	c->irq_access = 0;
++	c->ops->irq_unlock(c->context, flags);
++	c->ops->sync_irq(c->context);
++}
++
++static int nt_drain(struct nt_mmc *c)
++{
++	unsigned long flags;
++	unsigned value;
++	int error = 0;
++
++	/* Keep a pending level IRQ excluded until its accessible source is masked.
++	 * A failed readback publishes the terminal fault before IRQs can resume.
++	 */
++	flags = c->ops->irq_lock(c->context);
++	c->irq_access = 0;
++	nt_write(c, 0x30, 0);
++	if (nt_read(c, 0x30, &value) || value) {
++		c->fault = -EIO;
++		error = -EIO;
++	} else {
++		nt_write(c, 0x28, NT_STATUS_MASK);
++		c->pending = 0;
++	}
++	c->ops->irq_unlock(c->context, flags);
++	c->ops->sync_irq(c->context);
++	return error;
++}
++
++/* Stop the PIO engine before any request buffer can be returned to MMC core. */
++static int nt_halt(struct nt_mmc *c, unsigned long long deadline)
++{
++	unsigned value;
++	if (nt_drain(c))
++		return -EIO;
++	nt_write(c, 0x10c, 0);
++	if (nt_poll_clear(c, 0x10c, 1, deadline) || nt_read(c, 0x1c, &value))
++		return -EIO;
++	nt_write(c, 0x1c, value & ~0x40U);
++	return nt_poll_clear(c, 0, 0x600, deadline);
++}
++
++static int nt_reset(struct nt_mmc *c, unsigned long long deadline)
++{
++	unsigned value;
++	unsigned long long settle;
++	if (nt_drain(c))
++		return -EIO;
++	nt_write(c, 0x10c, 0);
++	if (nt_poll_clear(c, 0x10c, 1, deadline) || nt_read(c, 0x1c, &value))
++		return -EIO;
++	nt_write(c, 0x1c, value & ~0x40U);
++	if (nt_read(c, 0, &value))
++		return -EIO;
++	nt_write(c, 0, value | 0x400);
++	if (nt_poll_clear(c, 0, 0x600, deadline) || nt_read(c, 0x1b0, &value))
++		return -EIO;
++	nt_write(c, 0x1b0, value | 0x10);
++	nt_write(c, 0x44, 0x140000);
++	nt_write(c, 0x50, 0x2020);
++	if (nt_read(c, 0x4c, &value))
++		return -EIO;
++	nt_write(c, 0x4c, value | 1);
++	if (nt_poll_clear(c, 0x4c, 1, deadline) || nt_read(c, 0x54, &value))
++		return -EIO;
++	nt_write(c, 0x54, (value & 0x0fffffff) | 0xa0000000);
++	if (nt_read(c, 0x4c, &value))
++		return -EIO;
++	nt_write(c, 0x4c, value | 0x10);
++	settle = c->ops->now_us(c->context) + 1024;
++	while (c->ops->now_us(c->context) < settle) {
++		if (c->ops->now_us(c->context) >= deadline)
++			return -ETIMEDOUT;
++		c->ops->relax(c->context);
++	}
++	if (c->ops->now_us(c->context) >= deadline)
++		return -ETIMEDOUT;
++	return nt_drain(c);
++}
++
++int nt_mmc_initialize(struct nt_mmc *c, unsigned rate)
++{
++	unsigned value;
++	int error = -EINVAL;
++	c->ops->lock(c->context);
++	if (!c->admitted || rate < 400000 || rate > 12000000)
++		goto out;
++	error = nt_reset(c, c->ops->now_us(c->context) + NT_RESET_US);
++	if (!error)
++		error = nt_read(c, 0x3c, &value);
++	if (!error) {
++		nt_write(c, 0x3c, value & ~3U);
++		c->rate = rate;
++		c->initialized = 1;
++	}
++	if (error)
++		c->fault = error;
++out:
++	c->ops->unlock(c->context);
++	return error;
++}
++
++/* Linux power-off and power-up legitimately use clock0/vdd0. */
++int nt_mmc_ios_valid(unsigned clock, unsigned width, unsigned timing,
++		     unsigned signal_voltage, unsigned vdd)
++{
++	if (width || timing || signal_voltage)
++		return -EINVAL;
++	if (!clock)
++		return 0;
++	if (clock < 400000 || clock > 12000000 || (vdd != 20 && vdd != 21))
++		return -EINVAL;
++	return 0;
++}
++
++static int nt_validate(struct nt_mmc_request *r)
++{
++	if (r->opcode > 63 || r->attached_stop || r->sbc || r->write > 1)
++		return -EINVAL;
++	if (r->response != 0 && r->response != 1 && r->response != 7 &&
++	    r->response != 21 && r->response != 29)
++		return -EOPNOTSUPP;
++	if (r->response == 29 && r->opcode != 12 && r->opcode != 38)
++		return -EOPNOTSUPP;
++	if (r->opcode == 1 || r->opcode == 5 || r->opcode == 11 ||
++	    r->opcode == 18 || r->opcode == 19 || r->opcode == 21 ||
++	    r->opcode == 25 || r->opcode == 52 || r->opcode == 53)
++		return -EOPNOTSUPP;
++	if (r->length > 512 || (r->length ? r->blocks != 1 : r->blocks != 0))
++		return -EINVAL;
++	return 0;
++}
++
++void nt_mmc_submit(struct nt_mmc *c, struct nt_mmc_request *r)
++{
++	int error;
++	memset(r->resp, 0, sizeof(r->resp));
++	r->bytes = 0;
++	r->error = 0;
++	c->ops->lock(c->context);
++	error = nt_validate(r);
++	if (!error && (c->stopping || c->fault || !c->initialized || !c->rate))
++		error = c->fault ? c->fault : -ESHUTDOWN;
++	if (!error && c->active)
++		error = -EBUSY;
++	if (!error) {
++		r->submitted_us = c->ops->now_us(c->context);
++		c->active = r;
++	} else
++		r->error = error;
++	c->ops->unlock(c->context);
++	if (error)
++		c->ops->done(c->context, r);
++}
++
++int nt_mmc_irq(struct nt_mmc *c)
++{
++	unsigned status;
++	unsigned long flags;
++	int handled;
++	flags = c->ops->irq_lock(c->context);
++	if (!c->irq_access) {
++		c->ops->irq_unlock(c->context, flags);
++		return 0;
++	}
++	status = c->ops->read(c->context, 0x28);
++	if (status == ~0U) {
++		c->fault = -EIO;
++		c->pending |= NT_READ_FAULT;
++		c->irq_access = 0;
++		handled = -EIO;
++	} else {
++		status &= NT_STATUS_MASK;
++		handled = !!status;
++		if (status) {
++			nt_write(c, 0x28, status);
++			c->pending |= status;
++		}
++	}
++	c->ops->irq_unlock(c->context, flags);
++	return handled;
++}
++
++/* Polling also handles a lost interrupt; both readers share the IRQ lock. */
++static unsigned nt_events(struct nt_mmc *c)
++{
++	unsigned status, events;
++	unsigned long flags;
++	flags = c->ops->irq_lock(c->context);
++	if (c->pending & NT_READ_FAULT) {
++		c->fault = -EIO;
++		c->irq_access = 0;
++		events = c->pending;
++		c->pending = 0;
++		c->ops->irq_unlock(c->context, flags);
++		return events;
++	}
++	status = c->ops->read(c->context, 0x28);
++	if (status == ~0U) {
++		c->fault = -EIO;
++		c->irq_access = 0;
++		c->pending |= NT_READ_FAULT;
++	} else if (status & NT_STATUS_MASK) {
++		nt_write(c, 0x28, status & NT_STATUS_MASK);
++		c->pending |= status & NT_STATUS_MASK;
++	}
++	events = c->pending;
++	c->pending = 0;
++	c->ops->irq_unlock(c->context, flags);
++	return events;
++}
++
++static int nt_fifo(struct nt_mmc *c, struct nt_mmc_request *r, unsigned *offset)
++{
++	unsigned value, remaining = (r->length - *offset + 3) / 4;
++	unsigned words = remaining > 32 ? 32 : remaining, i, j;
++	if (!words)
++		return 0;
++	if (nt_read(c, 0x108, &value))
++		return -EIO;
++	if (r->write) {
++		if (!(value & 0x100))
++			return 0;
++	} else if (words == 32 ? !(value & 0x200) : (value & 0x3f) != words) {
++		return 0;
++	}
++	for (i = 0; i < words; i++) {
++		unsigned at = *offset + i * 4;
++		if (r->write) {
++			value = 0;
++			for (j = 0; j < 4 && at + j < r->length; j++)
++				value |= (unsigned)c->bounce[at + j] << (j * 8);
++			nt_write(c, 0x100, value);
++		} else {
++			/* FIFO payload0xffffffff is valid data, not an MMIO fault. */
++			value = c->ops->read(c->context, 0x100);
++			for (j = 0; j < 4 && at + j < r->length; j++)
++				c->bounce[at + j] = value >> (j * 8);
++		}
++	}
++	*offset += words * 4;
++	if (*offset > r->length)
++		*offset = r->length;
++	return 0;
++}
++
++static int nt_launch(struct nt_mmc *c, struct nt_mmc_request *r)
++{
++	unsigned value, count, i, response = r->response == 7 ? 0xc0 : r->response ? 0x40 : 0;
++	unsigned long long ticks;
++	unsigned long flags;
++	if (nt_read(c, 0, &value))
++		return -EIO;
++	if (value & 0x600)
++		return -EBUSY;
++	if (r->length) {
++		/* Recovered read-spacing sequence is not a timed readiness proof. */
++		count = c->rate >= 12000000 ? 21 : 9;
++		for (i = 0; i < count + 2; i++)
++			if (nt_read(c, 0, &value))
++				return -EIO;
++		ticks = (unsigned long long)r->timeout_ns * c->rate + 999999999;
++#ifdef __KERNEL__
++		ticks = div_u64(ticks, 1000000000);
++#else
++		ticks /= 1000000000;
++#endif
++		ticks += r->timeout_clks;
++		if (!ticks)
++			ticks = c->rate;
++		if (ticks > 0xffffffffULL)
++			ticks = 0xffffffffULL;
++		nt_write(c, 0x20, (unsigned)ticks);
++		if (nt_read(c, 0x1c, &value))
++			return -EIO;
++		nt_write(c, 0x1c, (value & 0xffffU & ~0x2240U) |
++			 (r->length << 16) | 0x40);
++		nt_write(c, 0x104, r->length);
++		nt_write(c, 0x10c, r->write ? 4 : 0);
++		nt_write(c, 0x10c, r->write ? 5 : 1);
++	}
++	nt_write(c, 4, r->argument);
++	if (nt_read(c, 0, &value))
++		return -EIO;
++	value = (value & ~0xbffU) | response | r->opcode;
++	nt_write(c, 0, value);
++	flags = c->ops->irq_lock(c->context);
++	c->irq_access = 1;
++	nt_write(c, 0x30, NT_STATUS_MASK);
++	nt_write(c, 0, value | 0x200);
++	c->ops->irq_unlock(c->context, flags);
++	return 0;
++}
++
++void nt_mmc_run(struct nt_mmc *c)
++{
++	struct nt_mmc_request *r;
++	unsigned status, offset = 0, value, i;
++	unsigned long long start, command_deadline, deadline;
++	int error = 0, command_done = 0, data_done = 0, service = 0;
++
++	c->ops->lock(c->context);
++	r = c->active;
++	if (!r) {
++		c->ops->unlock(c->context);
++		return;
++	}
++	if (c->fault || !c->rate) {
++		error = c->fault ? c->fault : -ESHUTDOWN;
++		goto notify;
++	}
++	if (c->ops->now_us(c->context) >= r->submitted_us + NT_COMMAND_US) {
++		error = -ETIMEDOUT;
++		goto notify;
++	}
++	memset(c->bounce, 0, sizeof(c->bounce));
++	if (r->length && r->write && c->ops->copy(c->context, r, c->bounce, 1) != (int)r->length) {
++		error = -EINVAL;
++		goto notify;
++	}
++	error = nt_drain(c);
++	if (error)
++		goto notify;
++	start = r->submitted_us;
++	command_deadline = start + NT_COMMAND_US;
++	deadline = start + (r->length ? NT_DATA_US : NT_COMMAND_US);
++	if (r->length) {
++		for (;;) {
++			if (c->ops->now_us(c->context) >= command_deadline) {
++				error = -ETIMEDOUT;
++				break;
++			}
++			error = nt_read(c, 0x40, &value);
++			if (error || (value & 1))
++				break;
++			c->ops->relax(c->context);
++		}
++	}
++	/* Admission and the final readiness read also consume this deadline. */
++	if (!error && c->ops->now_us(c->context) >= command_deadline)
++		error = -ETIMEDOUT;
++	if (!error)
++		error = nt_launch(c, r);
++	while (!error) {
++		if (c->ops->now_us(c->context) >= deadline ||
++		    (!command_done && c->ops->now_us(c->context) >= command_deadline)) {
++			error = -ETIMEDOUT;
++			break;
++		}
++		status = nt_events(c);
++		if (status & NT_READ_FAULT) {
++			error = -EIO;
++			c->fault = error;
++			break;
++		}
++		if (status & 0xc) {
++			error = -ETIMEDOUT;
++			break;
++		}
++		if ((status & 2) || ((status & 1) && (r->response & 4))) {
++			error = -EILSEQ;
++			break;
++		}
++		if ((status & (r->length ? 0x10 : 0x50)) ||
++		    ((status & 1) && !(r->response & 4)))
++			command_done = 1;
++		if (status & 0xa0)
++			data_done = 1;
++		if (status & 0x50)
++			service = 1;
++		if (r->length && service && offset < r->length)
++			error = nt_fifo(c, r, &offset);
++		if (error || (command_done && (!r->length || (data_done && offset == r->length))))
++			break;
++		if (c->ops->now_us(c->context) >= deadline ||
++		    (!command_done && c->ops->now_us(c->context) >= command_deadline)) {
++			error = -ETIMEDOUT;
++			break;
++		}
++		c->ops->relax(c->context);
++	}
++	/* Response words may legitimately contain all ones. */
++	if (!error && r->response) {
++		if (r->response == 7)
++			for (i = 0; i < 4; i++)
++				r->resp[3 - i] = c->ops->read(c->context, 8 + 4 * i);
++		else
++			r->resp[0] = c->ops->read(c->context, 8);
++	}
++	deadline = c->ops->now_us(c->context) + NT_RESET_US;
++	if (c->fault) {
++		nt_mmc_irq_off(c);
++		error = c->fault;
++	} else if (error ? nt_reset(c, deadline) : nt_halt(c, deadline)) {
++		c->fault = -EIO;
++		error = -EIO;
++	}
++	if (!error && r->length && !r->write &&
++	    c->ops->copy(c->context, r, c->bounce, 0) != (int)r->length)
++		error = -EINVAL;
++notify:
++	r->error = error;
++	r->bytes = error ? 0 : r->length;
++	c->active = NULL;
++	c->ops->unlock(c->context);
++	/* Callback can free r and synchronously submit the next request. */
++	c->ops->done(c->context, r);
++}
++
++void nt_mmc_stopping(struct nt_mmc *c)
++{
++	c->ops->lock(c->context);
++	c->stopping = 1;
++	c->ops->unlock(c->context);
++}
++
++int nt_mmc_shutdown(struct nt_mmc *c)
++{
++	int error;
++	c->ops->lock(c->context);
++	c->stopping = 1;
++	if (c->active)
++		error = -EBUSY;
++	else if (c->fault)
++		error = c->fault;
++	else
++		error = nt_halt(c, c->ops->now_us(c->context) + NT_RESET_US);
++	if (error)
++		c->fault = error;
++	c->ops->unlock(c->context);
++	return error;
++}
+--- /dev/null
++++ b/drivers/mmc/host/nt98513/nt98513-mmc-driver.c
+@@ -0,0 +1,516 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/* Permanent experimental native SD host; board power/pads are inherited. */
++#include <linux/atomic.h>
++#include <linux/delay.h>
++#include <linux/interrupt.h>
++#include <linux/io.h>
++#include <linux/irq.h>
++#include <linux/irqdomain.h>
++#include <linux/ktime.h>
++#include <linux/mmc/host.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/of.h>
++#include <linux/of_irq.h>
++#include <linux/platform_device.h>
++#include <linux/scatterlist.h>
++#include <linux/slab.h>
++#include <linux/soc/nt98513_mmc_clock.h>
++#include <linux/workqueue.h>
++#include "nt98513-mmc.h"
++
++struct nt_host {
++	struct mmc_host *mmc;
++	struct nt98513_mmc_clock *clock;
++	void __iomem *regs;
++	struct mutex lock;
++	spinlock_t irq_lock;
++	struct work_struct work;
++	struct nt_mmc core;
++	int irq;
++	atomic_t irq_disabled;
++	bool irq_live, registered;
++};
++
++struct nt_request {
++	struct nt_mmc_request core;
++	struct mmc_request *mrq;
++};
++
++static unsigned nt_host_read(void *context, unsigned offset)
++{
++	struct nt_host *h = context;
++	unsigned long flags;
++	unsigned value = ~0U;
++
++	/* This !SMP host can be interrupted between any two worker accesses. */
++	local_irq_save(flags);
++	if (!READ_ONCE(h->core.fault)) {
++		value = readl(h->regs + offset);
++		/* FIFO and response words have no reserved all-ones sentinel. */
++		if (value == ~0U && offset != 0x100 &&
++		    offset != 8 && offset != 12 && offset != 16 && offset != 20)
++			h->core.fault = -EIO;
++	}
++	local_irq_restore(flags);
++	return value;
++}
++
++static void nt_host_write(void *context, unsigned offset, unsigned value)
++{
++	struct nt_host *h = context;
++	unsigned long flags;
++
++	local_irq_save(flags);
++	if (!READ_ONCE(h->core.fault))
++		writel(value, h->regs + offset);
++	local_irq_restore(flags);
++}
++
++static unsigned long long nt_host_now(void *context)
++{
++	(void)context;
++	return ktime_to_us(ktime_get());
++}
++
++static void nt_host_relax(void *context)
++{
++	(void)context;
++	usleep_range(50, 100);
++}
++
++static void nt_host_lock(void *context)
++{
++	struct nt_host *h = context;
++	mutex_lock(&h->lock);
++}
++
++static void nt_host_unlock(void *context)
++{
++	struct nt_host *h = context;
++	mutex_unlock(&h->lock);
++}
++
++static unsigned long nt_host_irq_lock(void *context)
++{
++	struct nt_host *h = context;
++	unsigned long flags;
++	spin_lock_irqsave(&h->irq_lock, flags);
++	return flags;
++}
++
++static void nt_host_irq_unlock(void *context, unsigned long flags)
++{
++	struct nt_host *h = context;
++	spin_unlock_irqrestore(&h->irq_lock, flags);
++}
++
++/* Terminal faults never re-enable this dedicated IRQ. The latch prevents
++ * process/IRQ races and repeated cleanup from increasing its disable depth.
++ */
++static void nt_disable_irq(struct nt_host *h)
++{
++	unsigned long flags;
++
++	/* Do not expose a set latch before the Linux level IRQ is disabled. */
++	local_irq_save(flags);
++	if (READ_ONCE(h->irq_live) && !atomic_cmpxchg(&h->irq_disabled, 0, 1))
++		disable_irq_nosync(h->irq);
++	local_irq_restore(flags);
++}
++
++static void nt_host_sync_irq(void *context)
++{
++	struct nt_host *h = context;
++
++	/* The core has dropped its IRQ spinlock and fenced controller access. */
++	if (READ_ONCE(h->core.fault))
++		nt_disable_irq(h);
++	if (h->irq_live)
++		synchronize_irq(h->irq);
++}
++
++static int nt_host_copy(void *context, struct nt_mmc_request *r,
++			unsigned char *buffer, int to_device)
++{
++	struct nt_request *request = container_of(r, struct nt_request, core);
++	struct mmc_data *data = request->mrq->data;
++	(void)context;
++	if (to_device)
++		return sg_copy_to_buffer(data->sg, data->sg_len, buffer, r->length);
++	return sg_copy_from_buffer(data->sg, data->sg_len, buffer, r->length);
++}
++
++static void nt_host_done(void *context, struct nt_mmc_request *r)
++{
++	struct nt_host *h = context;
++	struct nt_request *request = container_of(r, struct nt_request, core);
++	struct mmc_request *mrq = request->mrq;
++
++	/* A late halt/reset failure may occur after the first nonfatal fence. */
++	if (READ_ONCE(h->core.fault))
++		nt_mmc_irq_off(&h->core);
++	mrq->cmd->error = r->error;
++	memcpy(mrq->cmd->resp, r->resp, sizeof(r->resp));
++	if (mrq->data) {
++		mrq->data->error = r->error;
++		mrq->data->bytes_xfered = r->bytes;
++	}
++	/* Nothing owned by the request is accessed after its callback. */
++	kfree(request);
++	mmc_request_done(h->mmc, mrq);
++}
++
++static const struct nt_mmc_ops nt_ops = {
++	.read = nt_host_read,
++	.write = nt_host_write,
++	.now_us = nt_host_now,
++	.relax = nt_host_relax,
++	.lock = nt_host_lock,
++	.unlock = nt_host_unlock,
++	.irq_lock = nt_host_irq_lock,
++	.irq_unlock = nt_host_irq_unlock,
++	.sync_irq = nt_host_sync_irq,
++	.copy = nt_host_copy,
++	.done = nt_host_done,
++};
++
++static void nt_work(struct work_struct *work)
++{
++	struct nt_host *h = container_of(work, struct nt_host, work);
++	int error;
++	mutex_lock(&h->lock);
++	error = nt98513_mmc_clock_fault(h->clock);
++	if (error) {
++		h->core.fault = error;
++		nt_mmc_irq_off(&h->core);
++	}
++	mutex_unlock(&h->lock);
++	nt_mmc_run(&h->core);
++}
++
++static irqreturn_t nt_irq(int irq, void *context)
++{
++	struct nt_host *h = context;
++	int handled;
++
++	(void)irq;
++	/* A process-side fault may have fenced MMIO just before this IRQ ran. */
++	if (READ_ONCE(h->core.fault)) {
++		nt_disable_irq(h);
++		return IRQ_HANDLED;
++	}
++	handled = nt_mmc_irq(&h->core);
++	if (handled < 0)
++		nt_disable_irq(h);
++	return handled ? IRQ_HANDLED : IRQ_NONE;
++}
++
++static void nt_request(struct mmc_host *mmc, struct mmc_request *mrq)
++{
++	struct nt_host *h = mmc_priv(mmc);
++	struct nt_request *request;
++	struct nt_mmc_request *r;
++	struct scatterlist *sg;
++	unsigned i, total = 0;
++	int error;
++
++	/* Reject a bad SG contract before the portable engine touches hardware. */
++	if (mrq->data) {
++		if (!mrq->data->sg || !mrq->data->sg_len || mrq->data->sg_len > 128 ||
++		    mrq->data->blocks != 1 || !mrq->data->blksz || mrq->data->blksz > 512 ||
++		    ((mrq->data->flags & (MMC_DATA_WRITE | MMC_DATA_READ)) != MMC_DATA_WRITE &&
++		     (mrq->data->flags & (MMC_DATA_WRITE | MMC_DATA_READ)) != MMC_DATA_READ)) {
++			error = -EINVAL;
++			goto reject;
++		}
++		for_each_sg(mrq->data->sg, sg, mrq->data->sg_len, i) {
++			if (sg->length > 512 - total) {
++				error = -EINVAL;
++				goto reject;
++			}
++			total += sg->length;
++		}
++		if (total != mrq->data->blksz) {
++			error = -EINVAL;
++			goto reject;
++		}
++	}
++	request = kzalloc(sizeof(*request), GFP_ATOMIC);
++	if (!request) {
++		error = -ENOMEM;
++		goto reject;
++	}
++	request->mrq = mrq;
++	r = &request->core;
++	r->opcode = mrq->cmd->opcode;
++	r->argument = mrq->cmd->arg;
++	r->response = mmc_resp_type(mrq->cmd);
++	r->busy_timeout_ms = mrq->cmd->busy_timeout;
++	r->sbc = !!mrq->sbc;
++	r->attached_stop = !!mrq->stop;
++	if (mrq->data) {
++		r->length = total;
++		r->blocks = mrq->data->blocks;
++		r->write = !!(mrq->data->flags & MMC_DATA_WRITE);
++		r->timeout_ns = mrq->data->timeout_ns;
++		r->timeout_clks = mrq->data->timeout_clks;
++	}
++	mutex_lock(&h->lock);
++	error = nt98513_mmc_clock_fault(h->clock);
++	if (error) {
++		h->core.fault = error;
++		nt_mmc_irq_off(&h->core);
++	}
++	mutex_unlock(&h->lock);
++	nt_mmc_submit(&h->core, r);
++	/* submit may complete/free r immediately. Never inspect it here. */
++	schedule_work(&h->work);
++	return;
++reject:
++	mrq->cmd->error = error;
++	if (mrq->data) {
++		mrq->data->error = error;
++		mrq->data->bytes_xfered = 0;
++	}
++	mmc_request_done(mmc, mrq);
++}
++
++static void nt_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
++{
++	struct nt_host *h = mmc_priv(mmc);
++	unsigned actual;
++	int error;
++
++	mutex_lock(&h->lock);
++	if (h->core.fault)
++		goto out;
++	error = nt_mmc_ios_valid(ios->clock, ios->bus_width, ios->timing,
++				 ios->signal_voltage, ios->vdd);
++	if (!error)
++		error = nt98513_mmc_clock_fault(h->clock);
++	if (!error && h->core.active)
++		error = -EBUSY;
++	/* An OFF instance already passed stop/idle; do not read its registers. */
++	if (!error && h->core.rate)
++		error = nt_mmc_idle_locked(&h->core);
++	if (error)
++		goto fault;
++	if (!ios->clock) {
++		error = nt98513_mmc_clock_stop(h->clock);
++		if (!error) {
++			h->core.rate = 0;
++			mmc->actual_clock = 0;
++		}
++	} else {
++		error = nt98513_mmc_clock_rate(h->clock, ios->clock, &actual);
++		if (!error) {
++			h->core.rate = actual;
++			mmc->actual_clock = actual;
++		}
++	}
++fault:
++	if (error) {
++		h->core.fault = error;
++		nt_mmc_irq_off(&h->core);
++		dev_err(mmc_dev(mmc), "SD ios/clock fault %d; host offline\n", error);
++	}
++out:
++	mutex_unlock(&h->lock);
++}
++
++static const struct mmc_host_ops nt_host_ops = {
++	.request = nt_request,
++	.set_ios = nt_set_ios,
++	/* No card_busy callback: supported native SD paths poll CMD13 in core. */
++};
++
++static int nt_resources(struct platform_device *pdev, unsigned *index, int *irq)
++{
++	struct device_node *node = pdev->dev.of_node;
++	struct resource *r;
++	struct irq_data *data;
++	struct of_phandle_args spec;
++	u32 id, width, frequency;
++	int error;
++
++	if (!node || pdev->num_resources != 1 || of_irq_count(node) != 1 ||
++	    of_get_available_child_count(node) ||
++	    !of_property_read_bool(node, "openipc,linux-exclusive-ownership") ||
++	    !of_property_read_bool(node, "openipc,qualified-inherited-board-state") ||
++	    !of_property_read_bool(node, "openipc,stable-192mhz-parent") ||
++	    of_property_read_u32(node, "openipc,controller-index", &id) || id > 1 ||
++	    of_property_read_u32(node, "bus-width", &width) || width != 1 ||
++	    of_property_read_u32(node, "max-frequency", &frequency) || frequency != 12000000)
++		return -EINVAL;
++	r = platform_get_resource_byname(pdev, IORESOURCE_MEM, "host");
++	if (!r || r->start != (id ? 0xc0500000 : 0xc0420000) || resource_size(r) != 0x200)
++		return -EINVAL;
++	error = of_irq_parse_one(node, 0, &spec);
++	if (error)
++		return error;
++	error = spec.args_count != 1 || spec.args[0] != 30 + id ||
++		!of_device_is_compatible(spec.np, "openipc,nt98513-intc");
++	if (error) {
++		error = -EINVAL;
++		goto put_parent;
++	}
++	*irq = platform_get_irq(pdev, 0);
++	if (*irq <= 0) {
++		error = *irq ? *irq : -EINVAL;
++		goto put_parent;
++	}
++	data = irq_get_irq_data(*irq);
++	if (!data || !data->domain || irqd_to_hwirq(data) != 30 + id ||
++	    irq_domain_get_of_node(data->domain) != spec.np)
++		error = -EINVAL;
++put_parent:
++	of_node_put(spec.np);
++	if (error)
++		return error;
++	*index = id;
++	return 0;
++}
++
++static void nt_retire(struct nt_host *h)
++{
++	int error;
++	nt_mmc_stopping(&h->core);
++	if (h->registered) {
++		mmc_remove_host(h->mmc);
++		h->registered = false;
++	}
++	flush_work(&h->work);
++	/* Core power-off may already have stopped the bus clock. */
++	if (h->core.rate)
++		error = nt_mmc_shutdown(&h->core);
++	else
++		error = h->core.fault;
++	if (h->core.fault)
++		nt_mmc_irq_off(&h->core);
++	if (!error)
++		error = nt98513_mmc_clock_stop(h->clock);
++	if (!error)
++		error = nt98513_mmc_clock_release(h->clock);
++	if (h->irq_live) {
++		free_irq(h->irq, h);
++		h->irq_live = false;
++	}
++	if (error)
++		dev_err(mmc_dev(h->mmc), "SD shutdown fault %d; clock claim retained\n", error);
++}
++
++static int nt_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct mmc_host *mmc;
++	struct nt_host *h;
++	unsigned index, actual;
++	int irq, error;
++
++	error = nt_resources(pdev, &index, &irq);
++	if (error)
++		return error;
++	mmc = mmc_alloc_host(sizeof(*h), dev);
++	if (!mmc)
++		return -ENOMEM;
++	h = mmc_priv(mmc);
++	h->mmc = mmc;
++	h->irq = irq;
++	atomic_set(&h->irq_disabled, 0);
++	mutex_init(&h->lock);
++	spin_lock_init(&h->irq_lock);
++	INIT_WORK(&h->work, nt_work);
++	nt_mmc_init(&h->core, &nt_ops, h);
++	h->clock = devm_nt98513_mmc_clock_get(dev, index);
++	if (IS_ERR(h->clock)) {
++		error = PTR_ERR(h->clock);
++		goto free_host;
++	}
++	/* Clock qualification precedes even the first controller read. */
++	error = nt98513_mmc_clock_admit(h->clock);
++	if (error)
++		goto free_host;
++	h->regs = devm_platform_ioremap_resource_byname(pdev, "host");
++	if (IS_ERR(h->regs)) {
++		error = PTR_ERR(h->regs);
++		goto release;
++	}
++	error = nt_mmc_admit(&h->core);
++	if (error)
++		goto release;
++	writel(0, h->regs + 0x30);
++	if (readl(h->regs + 0x30)) {
++		error = -EIO;
++		goto release;
++	}
++	error = nt98513_mmc_clock_start(h->clock, 400000, &actual);
++	if (error)
++		goto release;
++	error = nt_mmc_initialize(&h->core, actual);
++	if (error)
++		goto retire;
++	error = request_irq(irq, nt_irq, 0, dev_name(dev), h);
++	if (error)
++		goto retire;
++	h->irq_live = true;
++	mmc->ops = &nt_host_ops;
++	mmc->f_min = 400000;
++	mmc->f_max = 12000000;
++	mmc->actual_clock = actual;
++	mmc->ocr_avail = MMC_VDD_32_33 | MMC_VDD_33_34;
++	mmc->caps = MMC_CAP_NEEDS_POLL;
++	mmc->caps2 = MMC_CAP2_NO_SDIO | MMC_CAP2_NO_MMC;
++	mmc->max_blk_count = 1;
++	mmc->max_blk_size = 512;
++	mmc->max_req_size = 512;
++	mmc->max_seg_size = 512;
++	mmc->max_segs = 128;
++	platform_set_drvdata(pdev, h);
++	error = mmc_add_host(mmc);
++	if (error)
++		goto retire;
++	h->registered = true;
++	return 0;
++retire:
++	nt_retire(h);
++	goto free_host;
++release:
++	/* A failed initialized clock operation retains its sticky claim. */
++	nt98513_mmc_clock_release(h->clock);
++free_host:
++	mmc_free_host(mmc);
++	return error;
++}
++
++static void nt_shutdown(struct platform_device *pdev)
++{
++	nt_retire(platform_get_drvdata(pdev));
++}
++
++static int nt_remove(struct platform_device *pdev)
++{
++	struct nt_host *h = platform_get_drvdata(pdev);
++	nt_retire(h);
++	mmc_free_host(h->mmc);
++	return 0;
++}
++
++static const struct of_device_id nt_match[] = {
++	{ .compatible = "openipc,nt98513-mmc-pio-v1" },
++	{ }
++};
++
++static struct platform_driver nt_driver = {
++	.probe = nt_probe,
++	.remove = nt_remove,
++	.shutdown = nt_shutdown,
++	.driver = {
++		.name = "nt98513-mmc-pio",
++		.of_match_table = nt_match,
++		.suppress_bind_attrs = true,
++	},
++};
++builtin_platform_driver(nt_driver);
++MODULE_LICENSE("GPL");
++MODULE_DESCRIPTION("Experimental NT98513 native SD single-block PIO host");
+--- /dev/null
++++ b/drivers/mmc/host/nt98513/nt98513-mmc.h
+@@ -0,0 +1,49 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef NT98513_MMC_H
++#define NT98513_MMC_H
++
++struct nt_mmc_request {
++	unsigned opcode, argument, response;
++	unsigned length, blocks, write, attached_stop, sbc;
++	unsigned timeout_ns, timeout_clks, busy_timeout_ms;
++	unsigned resp[4], bytes;
++	unsigned long long submitted_us;
++	int error;
++	void *cookie;
++};
++
++struct nt_mmc_ops {
++	unsigned (*read)(void *, unsigned);
++	void (*write)(void *, unsigned, unsigned);
++	unsigned long long (*now_us)(void *);
++	void (*relax)(void *);
++	void (*lock)(void *);
++	void (*unlock)(void *);
++	unsigned long (*irq_lock)(void *);
++	void (*irq_unlock)(void *, unsigned long);
++	void (*sync_irq)(void *);
++	int (*copy)(void *, struct nt_mmc_request *, unsigned char *, int);
++	void (*done)(void *, struct nt_mmc_request *);
++};
++
++struct nt_mmc {
++	const struct nt_mmc_ops *ops;
++	void *context;
++	struct nt_mmc_request *active;
++	unsigned pending, rate;
++	int admitted, initialized, stopping, fault, irq_access;
++	unsigned char bounce[512];
++};
++
++void nt_mmc_init(struct nt_mmc *, const struct nt_mmc_ops *, void *);
++int nt_mmc_admit(struct nt_mmc *);
++int nt_mmc_initialize(struct nt_mmc *, unsigned);
++int nt_mmc_idle_locked(struct nt_mmc *);
++int nt_mmc_ios_valid(unsigned, unsigned, unsigned, unsigned, unsigned);
++void nt_mmc_submit(struct nt_mmc *, struct nt_mmc_request *);
++int nt_mmc_irq(struct nt_mmc *);
++void nt_mmc_irq_off(struct nt_mmc *);
++void nt_mmc_run(struct nt_mmc *);
++void nt_mmc_stopping(struct nt_mmc *);
++int nt_mmc_shutdown(struct nt_mmc *);
++#endif

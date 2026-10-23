@@ -77,6 +77,7 @@ def check_archive(path, m):
 def check_build_output(build_output, variant):
     """Identify the selected consumer variant before Buildroot can rewrite it."""
     fragments = {
+        'mmc': 'shared-clock.config $(BR2_EXTERNAL_NT98513_PATH)/board/ethernet.config $(BR2_EXTERNAL_NT98513_PATH)/board/usb-host.config $(BR2_EXTERNAL_NT98513_PATH)/board/wifi.config $(BR2_EXTERNAL_NT98513_PATH)/board/mmc.config',
         'wifi': 'shared-clock.config $(BR2_EXTERNAL_NT98513_PATH)/board/ethernet.config $(BR2_EXTERNAL_NT98513_PATH)/board/usb-host.config $(BR2_EXTERNAL_NT98513_PATH)/board/wifi.config',
         'usb-host': 'shared-clock.config $(BR2_EXTERNAL_NT98513_PATH)/board/ethernet.config $(BR2_EXTERNAL_NT98513_PATH)/board/usb-host.config',
         'owned-input': 'owned-input-network.config',
@@ -119,7 +120,7 @@ def check_build_output(build_output, variant):
         'BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES': '"$(BR2_EXTERNAL_NT98513_PATH)/board/' + fragments[variant] + '"',
         'BR2_PACKAGE_BUSYBOX_CONFIG_FRAGMENT_FILES': '"' + str(TREE / 'board/owned-input-network-busybox.config') + '"',
     }
-    if variant == 'wifi':
+    if variant in ('wifi', 'mmc'):
         expected['BR2_PACKAGE_BUSYBOX_CONFIG_FRAGMENT_FILES'] = '"' + str(TREE / 'board/owned-input-network-busybox.config') + ' ' + str(TREE / 'board/wifi-busybox.config') + '"'
         for key in ('BR2_PACKAGE_WPA_SUPPLICANT_NT98513', 'BR2_PACKAGE_RTL8188FU_FIRMWARE_NT98513',
                     'BR2_PACKAGE_NT98513_WIFI_CONTROL', 'BR2_PACKAGE_WIRELESS_REGDB'):
@@ -200,7 +201,7 @@ def main():
     parser.add_argument('--reject-wifi-output', type=Path)
     parser.add_argument('--verify-archive', action='store_true')
     parser.add_argument('--build-output', type=Path)
-    parser.add_argument('--build-variant', choices=('owned-input', 'ethernet-owned-input', 'usb-host', 'wifi'), default='owned-input')
+    parser.add_argument('--build-variant', choices=('owned-input', 'ethernet-owned-input', 'usb-host', 'wifi', 'mmc'), default='owned-input')
     args = parser.parse_args()
     try:
         if args.reject_wifi_output is not None:
