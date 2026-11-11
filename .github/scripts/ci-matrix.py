@@ -193,7 +193,7 @@ NO_BUILD_SCRIPTS = {
     "lint-workflow-shell.py", "push_build.py", "soc_aliases.py",
     "test_automount.sh", "test_check_mac.sh", "test_excludes_report.sh",
     "test_load_hisilicon.sh", "test_push_build.py", "test_shell_parse.sh",
-    "test_strip_shell_comments.sh", "test_sysupgrade.sh", "test_crashlog.sh", "test_majestic_supervise.sh",
+    "test_strip_shell_comments.sh", "test_sysupgrade.sh", "test_sysupgrade_timeout.py", "test_crashlog.sh", "test_majestic_supervise.sh",
     # build-one.yml's request parser and its test: dispatch and shell-tests
     # only, never part of a board build.
     "build_request.sh", "test_build_request.sh",
@@ -962,6 +962,9 @@ def self_test():
         (["Makefile"], full, "build system"),
         (["general/openipc.fragment"], full, "fragment appended to every defconfig"),
         (["general/overlay/etc/init.d/rcS"], full, "overlay ships in every rootfs"),
+        (["general/overlay/usr/sbin/sysupgrade"], full, "updater ships in every rootfs"),
+        (["general/overlay/usr/sbin/sysupgrade", ".github/scripts/test_sysupgrade_timeout.py"],
+         full, "mount timeout host fixture does not hide the updater change"),
         (["general/scripts/rootfs_script.sh"], full, "post-build hook"),
         (["general/package/Config.in"], full, "package registry"),
         (["general/package/all-patches/gcc/11.4.0/0001-libsanitizer-musl-compat.patch"],
@@ -1017,6 +1020,7 @@ def self_test():
         ([".github/ISSUE_TEMPLATE/config.yml"], 0, "issue templates never build"),
         ([".github/ISSUE_TEMPLATE/1-bug.yml"], 0, "an issue form never builds"),
         ([".github/scripts/test_sysupgrade.sh"], 0, "shell-tests fixture"),
+        ([".github/scripts/test_sysupgrade_timeout.py"], 0, "mount timeout host fixture"),
         ([".github/scripts/test_check_mac.sh"], 0, "shell-tests: MAC derivation"),
         ([".github/scripts/test_crashlog.sh"], 0, "shell-tests: crash log capture"),
         ([".github/scripts/test_majestic_supervise.sh"], 0, "shell-tests: majestic supervisor"),

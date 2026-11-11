@@ -32,13 +32,35 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'pull_request' && !github.event.repository.private)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       # The parse-check that used to live here now runs for every shipped script
       # in the job below, against the busybox ash the device actually uses. This
       # step was `sh -n` then `dash -n`, which on ubuntu-latest is the same
       # check twice (/bin/sh is dash) and neither is the target shell.
+      - name: Identify the default timeout provider
+        timeout-minutes: 1
+        run: |
+          command -v timeout
+          readlink -f "$(command -v timeout)"
+          timeout --version
+          sha256sum "$(command -v timeout)"
+      - name: Install required BusyBox provider if absent
+        timeout-minutes: 2
+        run: |
+          if ! command -v busybox >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y busybox
+          fi
+          command -v busybox
+      - name: Check mount deadline and flash protection with both providers
+        timeout-minutes: 1
+        run: |
+          python3 .github/scripts/test_sysupgrade_timeout.py
+          python3 .github/scripts/test_sysupgrade_timeout.py --timeout busybox --busybox
       - run: bash .github/scripts/test_sysupgrade.sh
+        timeout-minutes: 8
 
       # The copy in git is not the copy that ships: the build strips whole-line
       # comments out of it. Run the same suite against that form, so the thing
@@ -46,6 +68,7 @@ jobs:
       # stripper could quietly change behaviour and every check above would
       # still pass, having tested a file no device ever runs.
       - name: Re-run against the stripped form that actually ships
+        timeout-minutes: 8
         run: |
           awk -f general/scripts/strip-shell-comments.awk \
             general/overlay/usr/sbin/sysupgrade > /tmp/sysupgrade.stripped
