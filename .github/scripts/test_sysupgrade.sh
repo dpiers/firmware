@@ -356,7 +356,7 @@ case "${STUB_MOUNT:-ok}" in
         echo "mount: mounting /dev/loop0 on $target failed: Invalid argument" >&2
         exit 255 ;;
     hang)
-        # exec, so a bounded caller TERMs the sleep itself rather than a wrapper
+        # exec, so a bounded caller signals the sleep itself rather than a wrapper
         # that leaves it orphaned. Far longer than mount_wait, so an unbounded
         # caller is unmistakable.
         exec sleep "${STUB_HANG_SECS:-600}" ;;
