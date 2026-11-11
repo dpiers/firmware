@@ -149,10 +149,47 @@ class MmcTargets(unittest.TestCase):
                     'CRYPTO_AES CRYPTO_CCM CRYPTO_GCM CRYPTO_CMAC CRYPTO_SHA256 CRYPTO_RSA CRYPTO_SHA1 '
                     'ASYMMETRIC_KEY_TYPE ASYMMETRIC_PUBLIC_KEY_SUBTYPE X509_CERTIFICATE_PARSER '
                     'PKCS7_MESSAGE_PARSER SYSTEM_DATA_VERIFICATION CFG80211_REQUIRE_SIGNED_REGDB '
-                    'CFG80211_USE_KERNEL_REGDB_KEYS BLOCK MMC MMC_BLOCK MMC_NT98513 NT98513_MMC_BOARD').split()
+                    'CFG80211_USE_KERNEL_REGDB_KEYS BLOCK MMC MMC_BLOCK MMC_NT98513 NT98513_MMC_BOARD '
+                    'RD_GZIP INITRAMFS_COMPRESSION_GZIP DECOMPRESS_GZIP ZLIB_INFLATE').split()
         kernel = self.root/'kernel'; hook = kernel/'arch/mips/nt98513/check-clock-config.sh'
         hook.parent.mkdir(parents=True); hook.write_text('#!/bin/sh\nexit 0\n')
         return kernel, dict.fromkeys(required, 'y')
+
+    @staticmethod
+    def compression_drift(good):
+        for symbol in ('RD_GZIP', 'INITRAMFS_COMPRESSION_GZIP', 'DECOMPRESS_GZIP', 'ZLIB_INFLATE'):
+            for value in (None, 'n', 'm'):
+                values = good.copy()
+                if value is None:
+                    values.pop(symbol)
+                else:
+                    values[symbol] = value
+                yield symbol + '=' + str(value), values
+        for choice in ('NONE', 'BZIP2', 'LZMA', 'XZ', 'LZO', 'LZ4', 'ZSTD'):
+            for value in ('y', 'm'):
+                symbol = 'INITRAMFS_COMPRESSION_' + choice
+                yield symbol + '=' + value, good | {symbol: value}
+
+    def test_mmc_kernel_guard_requires_only_gzip_and_complete_decoder(self):
+        kernel, good = self.kernel_fixture()
+        checker = TREE/'tools/check_mmc_kernel.sh'
+        for label, values in [('valid gzip', good), *self.compression_drift(good)]:
+            with self.subTest(config=label):
+                (kernel/'.config').write_text(''.join('CONFIG_%s=%s\n'%row for row in values.items()))
+                result = subprocess.run(['sh', str(checker), str(kernel)], capture_output=True, text=True)
+                if label == 'valid gzip':
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                else:
+                    self.assertNotEqual(result.returncode, 0, 'accepted ' + label)
+                    self.assertIn('NT98513 MMC:', result.stderr)
+
+    def test_mmc_fragment_selects_internal_gzip_over_base_none(self):
+        base = (TREE/'board/linux.config').read_text()
+        fragment = (TREE/'board/mmc.config').read_text().splitlines()
+        self.assertIn('CONFIG_INITRAMFS_COMPRESSION_NONE=y', base)
+        for setting in ('CONFIG_RD_GZIP=y', 'CONFIG_INITRAMFS_COMPRESSION_GZIP=y',
+                        '# CONFIG_INITRAMFS_COMPRESSION_NONE is not set'):
+            self.assertIn(setting, fragment)
 
     def test_mmc_kernel_guard_requires_own_board_and_inherited_wifi(self):
         checker = TREE/'tools/check_mmc_kernel.sh'
@@ -217,6 +254,12 @@ class MmcTargets(unittest.TestCase):
                     result = invoke(good | {symbol: 'n'})
                     self.assertNotEqual(result.returncode, 0, hook_list+' accepted '+symbol+' drift')
                     self.assertFalse((kernel/'passed').exists())
+                for label, values in self.compression_drift(good):
+                    with self.subTest(hook=hook_list, compression=label):
+                        result = invoke(values)
+                        self.assertNotEqual(result.returncode, 0, hook_list + ' accepted ' + label)
+                        self.assertFalse((kernel/'passed').exists())
+                        self.assertIn('NT98513 MMC:', result.stderr)
 
 if __name__ == '__main__':
     unittest.main()

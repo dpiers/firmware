@@ -69,6 +69,22 @@ precedence in the one-DT selection. The MMC post-configure and pre-build hooks a
 inherited Wi-Fi/USB/Ethernet checks. Required symbols must survive Kconfig
 normalization rather than merely appear in a fragment.
 
+The MMC variant compresses only the built-in initramfs with Linux gzip. The
+fragment selects `RD_GZIP` and `INITRAMFS_COMPRESSION_GZIP`, explicitly deselects
+`INITRAMFS_COMPRESSION_NONE`, and Kconfig selects `DECOMPRESS_GZIP` and
+`ZLIB_INFLATE`. Both resolved-config hooks require all four symbols built in and
+reject every other selected initramfs compression choice. Earlier variants keep
+their existing uncompressed initramfs configuration. Patches 1–10, block support,
+swap, schedulers and all existing port features remain unchanged.
+
+The input `rootfs.cpio` and its 130 members, metadata and file bytes are retained.
+Pinned Linux Kbuild compresses that archive with `gzip -n -f -9`; the normal kernel
+initramfs path decompresses it during rootfs population. The outer legacy uImage
+remains **uncompressed**, with load address 0x80101000, staging address 0x02c00000
+and the same complete 8 MiB image, RAM-span and cache checks. This does not change
+manual startup or enable any controller. The existing build commands below
+produce the compressed internal archive without a new target or packaging API.
+
 Prepare or verify the pinned Divinus source archive using the documented
 `nt98513-owned-input-prepare-source` / `nt98513-owned-input-check-source` workflow.
 For the MMC build, supply explicit absolute paths:
@@ -118,6 +134,17 @@ suite executes Make with a host-only fake Buildroot boundary and runs the real
 source/output guards and packager on synthetic ELF data; it cannot establish
 real kernel build success. The ordinary experimental discovery does not replace
 the dedicated58-case native Wi-Fi runner described in `WIFI.md`.
+
+Compression acceptance also requires the actual final ELF's embedded gzip span,
+linked decoder path and a complete single stream with valid CRC/ISIZE and no
+trailing bytes. Decode and compare byte-for-byte with the accepted source CPIO;
+Linux's gzip wrapper does not independently verify its trailer. These are
+independent artifact checks, not guarantees supplied by the resolved-config guard
+or RAM packager. Measure the final complete image reduction against the accepted
+8,388,560-byte MMC image and require at least 1 MiB regained; archive-size estimates
+alone do not establish that gain. Include decoder/inflate code and allocation
+overhead in the source/RAM review. Host decompression and static spans do not
+prove camera boot, peak memory use, speed or timing.
 
 Artifact review must establish the actual single linked disabled MMC DT,
 configuration/driver identities, complete image bound, unchanged userspace and
