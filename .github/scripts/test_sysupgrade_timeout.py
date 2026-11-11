@@ -76,8 +76,25 @@ def main():
                                      ('hang', 'exec /bin/sleep 4', None)]:
             with tempfile.TemporaryDirectory(prefix='sysupgrade-timeout-') as folder:
                 fixture = Path(folder)
-                (fixture / 'mount').write_text('#!/bin/sh\n[ "$*" = "-t squashfs -o ro image target" ] || exit 88\n' + stub + '\n')
-                (fixture / 'timeout').write_text('#!/bin/sh\nexec ' + shlex.join(provider) + ' "$@"\n')
+                marker = fixture / 'invocations'
+                token = fixture.name + ':' + form + ':' + case
+                marker_command = "printf '%s\\n' " + shlex.quote(token) + " >> " + shlex.quote(str(marker)) + "\n"
+                (fixture / 'mount').write_text('#!/bin/sh\n[ "$*" = "-t squashfs -o ro image target" ] || exit 88\n' + marker_command + stub + '\n')
+                # BusyBox may prefer its mount applet over PATH. Substitute only
+                # the command token, retaining the helper's signal and arguments.
+                fake_mount = shlex.quote(str(fixture / 'mount'))
+                command = shlex.join(provider)
+                wrapper = ('#!/bin/sh\n'
+                           'if [ "$1" = "-s" ]; then\n'
+                           '  [ "$#" -eq 10 ] && [ "$4" = mount ] || exit 89\n'
+                           '  sig=$2; duration=$3; shift 4\n'
+                           '  exec ' + command + ' -s "$sig" "$duration" ' + fake_mount + ' "$@"\n'
+                           'else\n'
+                           '  [ "$#" -eq 8 ] && [ "$2" = mount ] || exit 89\n'
+                           '  duration=$1; shift 2\n'
+                           '  exec ' + command + ' "$duration" ' + fake_mount + ' "$@"\n'
+                           'fi\n')
+                (fixture / 'timeout').write_text(wrapper)
                 for name in ('mount', 'timeout'):
                     (fixture / name).chmod(0o700)
                 script = helper[0] + '\n' + traps[0] + '''
@@ -93,9 +110,12 @@ echo AFTER_SURVIVED
 exit "$rc"
 '''
                 result = bounded(['/bin/sh', '-c', script], env=dict(os.environ, PATH=folder + ':/usr/bin:/bin'))
+                invocations = marker.read_text() if marker.exists() else ''
             masks = re.findall(r'^SigIgn:\s*([0-9a-fA-F]+)$', result['output'], re.M)
             required = sum(1 << (sig - 1) for sig in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM, signal.SIGPIPE))
             problems = []
+            if invocations != token + '\n':
+                problems.append('expected exactly one matching fake mount invocation')
             if result['external_deadline']:
                 problems.append('external deadline fired')
             if result['elapsed'] >= 3:
@@ -109,7 +129,8 @@ exit "$rc"
             if case == 'error' and 'fixture mount error\n' not in result['output']:
                 problems.append('ordinary error diagnostic lost')
             print(json.dumps(dict(form=form, case=case, source_sha256=hashlib.sha256(text.encode()).hexdigest(),
-                                  protection=traps[0], problems=problems, **result)), flush=True)
+                                  protection=traps[0], fake_invocations=invocations,
+                                  problems=problems, **result)), flush=True)
             failures.extend(problems)
     print(json.dumps(dict(status='FAIL' if failures else 'PASS', cases=6, failures=len(failures))), flush=True)
     return bool(failures)
